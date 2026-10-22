@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.2 (2026-10-22) — supported
+## v1.0.3 (2026-10-22) — supported
 
 - Fix native install as root: `migrate` via `runuser` (was `${SUDO} -u` → `-u: command not found`).
 
@@ -14,3 +14,6 @@
 ## v1.0.0 — deprecated
 
 Broken install paths (raw CDN cache, bad `SHA256SUMS` paths, piped autoinstaller). **Use v1.0.1.**
+
+## v1.0.3
+- Alembic migrations in native binary tarball.

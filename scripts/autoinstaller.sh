@@ -5,7 +5,7 @@ set -eo pipefail
 
 INSTALLER_REPO="${INSTALLER_REPO:-Astrum-Studio/asterisk24-connector-installer}"
 WORK_DIR="${INSTALLER_WORK_DIR:-/opt/asterisk24-connector-installer}"
-REF="v1.0.2"
+REF="v1.0.3"
 MODE="docker"
 ASSUME_YES=0
 SKIP_DOCKER=0
