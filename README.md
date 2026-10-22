@@ -1,38 +1,28 @@
 # Asterisk24 Connector Installer
 
-Public installer for **Astrum Bitrix24 Asterisk Connector** — бинарник и Docker-образ без исходного кода.
+Public installer for **Astrum Bitrix24 Asterisk Connector**.
 
 | Artifact | Where |
 |----------|--------|
-| Native binary | [Releases](https://github.com/Astrum-Studio/asterisk24-connector-installer/releases) `connector-linux-amd64.tar.gz` |
-| Docker image | `ghcr.io/astrum-studio/asterisk24-connector` (**public**) |
+| Native binary | [Releases](https://github.com/Astrum-Studio/asterisk24-connector-installer/releases) |
+| Docker image | `ghcr.io/astrum-studio/asterisk24-connector` (public) |
 
 ## Install
 
-Одна команда, без `git`, без сохранения скрипта в файл:
-
-**Native (systemd):**
+**Native:**
 
 ```bash
-VER=v1.0.0
-curl -fsSL "https://raw.githubusercontent.com/Astrum-Studio/asterisk24-connector-installer/${VER}/scripts/autoinstaller.sh" \
-  | sudo bash -s -- --mode native --version "${VER}" --yes
+VER=v1.0.1
+curl -fsSL "https://github.com/Astrum-Studio/asterisk24-connector-installer/releases/download/${VER}/autoinstaller.sh" \
+  | bash -s -- --mode native --version "${VER}" --yes
 ```
 
-**Docker (Compose):**
+**Docker:**
 
 ```bash
-VER=v1.0.0
-curl -fsSL "https://raw.githubusercontent.com/Astrum-Studio/asterisk24-connector-installer/${VER}/scripts/autoinstaller.sh" \
-  | sudo bash -s -- --mode docker --version "${VER}" --yes
+VER=v1.0.1
+curl -fsSL "https://github.com/Astrum-Studio/asterisk24-connector-installer/releases/download/${VER}/autoinstaller.sh" \
+  | bash -s -- --mode docker --version "${VER}" --yes
 ```
 
-Каталог: `/opt/asterisk24-connector-installer` (compose + `.env`) или `/opt/asterisk24-connector` (native).
-
-`--ghcr-token` нужен только если образ снова сделают приватным.
-
-## Contents
-
-- `scripts/autoinstaller.sh` — entrypoint
-- `docker-compose.yml` — app + workers + Postgres
-- `deploy/systemd/` — native units
+Скрипт с **Releases** (не `raw.githubusercontent.com` — у старых тегов там кэш). Каталог: `/opt/asterisk24-connector-installer` или `/opt/asterisk24-connector` (native).
