@@ -68,7 +68,10 @@ curl -fsSL "${RELEASE_API}" -o "${TMP}/${ASSET}"
 curl -fsSL "${SUMS_API}" -o "${TMP}/SHA256SUMS"
 (
   cd "${TMP}"
-  grep "${ASSET}" SHA256SUMS | sha256sum -c -
+  expected="$(awk '{print $1; exit}' SHA256SUMS)"
+  [[ -n "${expected}" ]] || die "SHA256SUMS is empty"
+  actual="$(sha256sum "${ASSET}" | awk '{print $1}')"
+  [[ "${expected}" == "${actual}" ]] || die "Checksum mismatch for ${ASSET}"
 )
 
 tar -xzf "${TMP}/${ASSET}" -C "${TMP}"
