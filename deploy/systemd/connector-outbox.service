@@ -1,0 +1,48 @@
+[Unit]
+Description=Astrum Connector worker: outbox processor
+Documentation=https://github.com/Astrum-Studio/asterisk24-connector-installer
+After=network-online.target connector-app.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=connector
+Group=connector
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=__INSTALL_DIR__/.env
+Environment=ENV_FILE=__INSTALL_DIR__/.env
+Environment=CONNECTOR_HOME=__INSTALL_DIR__
+Environment=PATH=__INSTALL_DIR__/:/usr/local/bin:/usr/bin
+ExecStart=__INSTALL_DIR__/connector worker outbox
+Restart=always
+RestartSec=5
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+SyslogIdentifier=connector-outbox
+UMask=0077
+# Hardening: code is root-owned and read-only for the service.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=__PROTECT_HOME__
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+StateDirectory=connector
+PrivateDevices=true
+ProtectHostname=true
+ProtectClock=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

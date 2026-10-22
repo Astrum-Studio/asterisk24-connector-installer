@@ -1,0 +1,139 @@
+x-recordings-volume: &recordings-volume
+  ${RECORDINGS_HOST_PATH:-${RECORDINGS_PATH:-/var/spool/asterisk/monitor}}:/var/spool/asterisk/monitor:ro
+
+x-connector-image: &connector-image
+  image: ghcr.io/astrum-studio/asterisk24-connector:${CONNECTOR_VERSION:?set CONNECTOR_VERSION in .env}
+  env_file:
+    - .env
+  environment:
+    RECORDINGS_DIR: /var/spool/asterisk/monitor
+    CONNECTOR_HOME: /opt/connector
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=64M,mode=1777
+
+x-worker-healthcheck: &worker-healthcheck
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 60s
+
+services:
+  app:
+    <<: *connector-image
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${EXPOSED_APP_PORT:-8079}:8077"
+    volumes:
+      - *recordings-volume
+    command: ["serve", "--host", "0.0.0.0", "--port", "8077"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/opt/connector/connector",
+          "probe",
+          "--url",
+          "http://127.0.0.1:8077/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  worker-ami:
+    <<: *connector-image
+    command: ["worker", "ami"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test:
+        [
+          "CMD",
+          "/opt/connector/connector",
+          "probe",
+          "--heartbeat",
+          "/tmp/connector-ami-listener.heartbeat",
+          "--max-age",
+          "120",
+        ]
+
+  worker-outbox:
+    <<: *connector-image
+    command: ["worker", "outbox"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test:
+        [
+          "CMD",
+          "/opt/connector/connector",
+          "probe",
+          "--heartbeat",
+          "/tmp/connector-outbox.heartbeat",
+          "--max-age",
+          "120",
+        ]
+
+  worker-cel:
+    <<: *connector-image
+    command: ["worker", "cel"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test:
+        [
+          "CMD",
+          "/opt/connector/connector",
+          "probe",
+          "--heartbeat",
+          "/tmp/connector-cel-reconciler.heartbeat",
+          "--max-age",
+          "120",
+        ]
+
+  worker-recording:
+    <<: *connector-image
+    volumes:
+      - *recordings-volume
+    command: ["worker", "recording"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test:
+        [
+          "CMD",
+          "/opt/connector/connector",
+          "probe",
+          "--heartbeat",
+          "/tmp/connector-recording-sync.heartbeat",
+          "--max-age",
+          "180",
+        ]
+
+  db:
+    image: postgres:16
+    env_file:
+      - db.env
+    ports:
+      - "127.0.0.1:${EXPOSED_DB_PORT:-5132}:5432"
+    environment:
+      - POSTGRES_USER=${DB__USER:-connector}
+      - POSTGRES_PASSWORD=${DB__PASSWORD:?set DB__PASSWORD in .env (run ./scripts/init-env.sh)}
+      - POSTGRES_DB=${DB__NAME:-connector}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
