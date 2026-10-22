@@ -16,7 +16,6 @@ sums="https://github.com/${INSTALLER_REPO}/releases/download/${TAG}/SHA256SUMS"
 curl -fsSL "${url}" -o "${TMP}/${ASSET}"
 curl -fsSL "${sums}" -o "${TMP}/SHA256SUMS"
 verify_release_tarball "${TMP}" "${ASSET}"
-if ! tar -tzf "${TMP}/${ASSET}" | grep -q '^connector-linux-amd64/connector$'; then
-  die "Tarball missing connector-linux-amd64/connector"
-fi
+list="$(tar -tzf "${TMP}/${ASSET}")" || die "Cannot list ${ASSET}"
+grep -q '^connector-linux-amd64/connector$' <<<"${list}" || die "Tarball missing connector-linux-amd64/connector"
 log_ok "Release ${TAG} download + checksum OK"
