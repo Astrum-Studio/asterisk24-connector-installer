@@ -5,6 +5,10 @@
 #     | sudo bash -s -- --mode docker --version v1.0.0 --ghcr-token "$TOKEN" --yes
 set -euo pipefail
 
+_AUTO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "${_AUTO_DIR}/lib/common.sh"
+
 INSTALLER_REPO="${INSTALLER_REPO:-Astrum-Studio/asterisk24-connector-installer}"
 INSTALLER_GIT="${INSTALLER_GIT:-https://github.com/${INSTALLER_REPO}.git}"
 DEFAULT_WORK_DIR="${DEFAULT_WORK_DIR:-/opt/asterisk24-connector-installer}"
@@ -56,22 +60,10 @@ if [[ "${EUID}" -ne 0 ]]; then
   echo "Run as root: curl … | sudo bash -s -- …" >&2
   exit 1
 fi
-command -v git >/dev/null 2>&1 || { echo "git is required" >&2; exit 1; }
+command -v git >/dev/null 2>&1 || die "git is required" "apt install git"
 
-echo "›  Cloning ${INSTALLER_REPO} @ ${REF} → ${WORK_DIR}"
-mkdir -p "$(dirname "${WORK_DIR}")"
-
-if [[ -d "${WORK_DIR}/.git" ]]; then
-  git -C "${WORK_DIR}" fetch --depth 1 origin "refs/tags/${REF}:refs/tags/${REF}" 2>/dev/null \
-    || git -C "${WORK_DIR}" fetch --depth 1 origin "${REF}" 2>/dev/null \
-    || git -C "${WORK_DIR}" fetch --depth 1 origin
-  git -C "${WORK_DIR}" checkout -f "${REF}"
-else
-  if ! git clone --depth 1 --branch "${REF}" "${INSTALLER_GIT}" "${WORK_DIR}"; then
-    git clone --depth 1 "${INSTALLER_GIT}" "${WORK_DIR}"
-    git -C "${WORK_DIR}" checkout -f "${REF}"
-  fi
-fi
+log_info "Syncing ${INSTALLER_REPO} @ ${REF} → ${WORK_DIR}"
+sync_installer_git_repo "${REF}" "${WORK_DIR}" "${INSTALLER_GIT}"
 
 chmod +x "${WORK_DIR}/install.sh" "${WORK_DIR}/scripts/"*.sh 2>/dev/null || true
 

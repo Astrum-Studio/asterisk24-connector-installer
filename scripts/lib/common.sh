@@ -345,6 +345,62 @@ has_systemd() {
   command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system || -d /sys/fs/cgroup/systemd ]]
 }
 
+# Clone or update public installer repo at an exact tag (handles moved tags / stale /opt).
+sync_installer_git_repo() {
+  local ref="$1" work_dir="$2" git_url="${3:-https://github.com/${INSTALLER_REPO}.git}"
+  case "${ref}" in v*) ;; *) ref="v${ref#v}" ;; esac
+  mkdir -p "$(dirname "${work_dir}")"
+  if [[ -d "${work_dir}/.git" ]]; then
+    git -C "${work_dir}" fetch --depth 1 origin "refs/tags/${ref}:refs/tags/${ref}" --force 2>/dev/null \
+      || git -C "${work_dir}" fetch --depth 1 origin "${ref}" --force 2>/dev/null \
+      || git -C "${work_dir}" fetch --depth 1 origin --force
+    git -C "${work_dir}" checkout -f "${ref}"
+    git -C "${work_dir}" reset --hard "${ref}"
+  elif ! git clone --depth 1 --branch "${ref}" "${git_url}" "${work_dir}" 2>/dev/null; then
+    git clone --depth 1 "${git_url}" "${work_dir}"
+    git -C "${work_dir}" checkout -f "${ref}"
+    git -C "${work_dir}" reset --hard "${ref}"
+  fi
+}
+
+# Verify Release tarball (SHA256SUMS may use basename or CI paths).
+verify_release_tarball() {
+  local dir="$1" asset="$2" sums_file="${3:-SHA256SUMS}"
+  local expected actual line path
+  [[ -f "${dir}/${asset}" ]] || die "Missing ${asset}"
+  [[ -f "${dir}/${sums_file}" ]] || die "Missing ${sums_file}"
+  line="$(grep -E "${asset}|connector-linux-amd64" "${dir}/${sums_file}" | head -1 || true)"
+  expected="$(awk '{print $1}' <<<"${line}")"
+  [[ -n "${expected}" ]] || expected="$(awk '{print $1; exit}' "${dir}/${sums_file}")"
+  [[ -n "${expected}" ]] || die "SHA256SUMS has no hash"
+  actual="$(sha256sum "${dir}/${asset}" | awk '{print $1}')"
+  [[ "${expected}" == "${actual}" ]] || die "Checksum mismatch for ${asset}"
+}
+
+ensure_native_packages() {
+  require_root_or_sudo "native install"
+  local family
+  family="$(detect_os_family)"
+  case "${family}" in
+    debian)
+      local missing=()
+      for pkg in curl ca-certificates rsync tar; do
+        dpkg -s "${pkg}" >/dev/null 2>&1 || missing+=("${pkg}")
+      done
+      if [[ ${#missing[@]} -gt 0 ]]; then
+        log_info "Installing: ${missing[*]}"
+        ${SUDO} apt-get update -qq
+        ${SUDO} DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+      fi
+      ;;
+    *)
+      for cmd in curl rsync tar; do
+        command -v "${cmd}" >/dev/null 2>&1 || die "Missing command: ${cmd}"
+      done
+      ;;
+  esac
+}
+
 port_in_use() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then

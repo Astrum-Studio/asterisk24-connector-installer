@@ -36,13 +36,15 @@ if [[ ! -f "${REPO_ROOT}/scripts/lib/common.sh" ]]; then
   echo "›  Fetching full installer ${INSTALLER_REPO} @ ${REF} → ${WORK_DIR}" >&2
   mkdir -p "$(dirname "${WORK_DIR}")"
   if [[ -d "${WORK_DIR}/.git" ]]; then
-    git -C "${WORK_DIR}" fetch --depth 1 origin "refs/tags/${REF}:refs/tags/${REF}" 2>/dev/null \
-      || git -C "${WORK_DIR}" fetch --depth 1 origin "${REF}" 2>/dev/null \
-      || git -C "${WORK_DIR}" fetch --depth 1 origin
+    git -C "${WORK_DIR}" fetch --depth 1 origin "refs/tags/${REF}:refs/tags/${REF}" --force 2>/dev/null \
+      || git -C "${WORK_DIR}" fetch --depth 1 origin "${REF}" --force 2>/dev/null \
+      || git -C "${WORK_DIR}" fetch --depth 1 origin --force
     git -C "${WORK_DIR}" checkout -f "${REF}"
+    git -C "${WORK_DIR}" reset --hard "${REF}"
   elif ! git clone --depth 1 --branch "${REF}" "${INSTALLER_GIT}" "${WORK_DIR}" 2>/dev/null; then
     git clone --depth 1 "${INSTALLER_GIT}" "${WORK_DIR}"
     git -C "${WORK_DIR}" checkout -f "${REF}"
+    git -C "${WORK_DIR}" reset --hard "${REF}"
   fi
   chmod +x "${WORK_DIR}/install.sh" "${WORK_DIR}/scripts/"*.sh 2>/dev/null || true
   exec bash "${WORK_DIR}/install.sh" "$@"

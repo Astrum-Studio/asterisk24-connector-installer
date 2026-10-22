@@ -54,6 +54,8 @@ done
 [[ "${VERSION_FROM_CLI}" -eq 1 || -n "${VERSION}" ]] || die "Pass --version vX.Y.Z"
 require_root_or_sudo "native install"
 has_systemd || die "systemd required"
+arch_supported || die "Unsupported CPU arch: $(uname -m)" "Use linux/amd64 or arm64"
+ensure_native_packages
 
 TAG="v${VERSION#v}"
 ASSET="connector-linux-amd64.tar.gz"
@@ -66,13 +68,7 @@ trap 'rm -rf "${TMP}"' EXIT
 log_info "Downloading ${ASSET} (${TAG})…"
 curl -fsSL "${RELEASE_API}" -o "${TMP}/${ASSET}"
 curl -fsSL "${SUMS_API}" -o "${TMP}/SHA256SUMS"
-(
-  cd "${TMP}"
-  expected="$(awk '{print $1; exit}' SHA256SUMS)"
-  [[ -n "${expected}" ]] || die "SHA256SUMS is empty"
-  actual="$(sha256sum "${ASSET}" | awk '{print $1}')"
-  [[ "${expected}" == "${actual}" ]] || die "Checksum mismatch for ${ASSET}"
-)
+verify_release_tarball "${TMP}" "${ASSET}"
 
 tar -xzf "${TMP}/${ASSET}" -C "${TMP}"
 SRC_TREE="${TMP}/connector-linux-amd64"
@@ -97,6 +93,13 @@ ${SUDO} env CONNECTOR_INSTALL_DIR="${INSTALL_DIR}" bash "${REPO_ROOT}/scripts/in
 
 ${SUDO} bash "${REPO_ROOT}/scripts/install-postgres.sh" --env-file "${INSTALL_DIR}/.env" $([[ "${ASSUME_YES}" -eq 1 ]] && echo --yes)
 
+for name in "${SYSTEMD_UNITS[@]}"; do
+  if ${SUDO} systemctl is-active --quiet "${name}" 2>/dev/null; then
+    log_info "Stopping ${name} (upgrade)…"
+    ${SUDO} systemctl stop "${name}" || true
+  fi
+done
+
 PROTECT_HOME=true
 case "${INSTALL_DIR}" in /root|/root/*|/home/*) PROTECT_HOME=false ;; esac
 
@@ -116,6 +119,10 @@ ${SUDO} chown root:"${DEFAULT_CONNECTOR_USER}" "${INSTALL_DIR}/.env"
 ${SUDO} chmod 640 "${INSTALL_DIR}/.env"
 ${SUDO} chown -R root:root "${INSTALL_DIR}"
 ${SUDO} chmod -R go+rX,go-w "${INSTALL_DIR}"
+
+log_info "Database migrations…"
+${SUDO} -u "${DEFAULT_CONNECTOR_USER}" env ENV_FILE="${INSTALL_DIR}/.env" CONNECTOR_HOME="${INSTALL_DIR}" \
+  "${INSTALL_DIR}/connector" migrate
 
 ${SUDO} systemctl daemon-reload
 if [[ "${NO_START}" -eq 0 ]]; then
