@@ -4,6 +4,50 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
+
+# curl …/install.sh alone has no scripts/ tree — clone installer at --version and re-exec.
+if [[ ! -f "${REPO_ROOT}/scripts/lib/common.sh" ]]; then
+  INSTALLER_REPO="${INSTALLER_REPO:-Astrum-Studio/asterisk24-connector-installer}"
+  INSTALLER_GIT="${INSTALLER_GIT:-https://github.com/${INSTALLER_REPO}.git}"
+  WORK_DIR="${INSTALLER_WORK_DIR:-/opt/asterisk24-connector-installer}"
+  REF="v1.0.0"
+  args=("$@")
+  i=0
+  while [[ $i -lt ${#args[@]} ]]; do
+    case "${args[$i]}" in
+      --version)
+        REF="${args[$((i + 1))]:-}"
+        REF="${REF#v}"
+        REF="v${REF}"
+        i=$((i + 2))
+        ;;
+      *) i=$((i + 1)) ;;
+    esac
+  done
+  [[ -n "${REF}" ]] || REF="v1.0.0"
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "Run as root: sudo bash install.sh …" >&2
+    exit 1
+  fi
+  command -v git >/dev/null 2>&1 || {
+    echo "git is required to bootstrap the installer" >&2
+    exit 1
+  }
+  echo "›  Fetching full installer ${INSTALLER_REPO} @ ${REF} → ${WORK_DIR}" >&2
+  mkdir -p "$(dirname "${WORK_DIR}")"
+  if [[ -d "${WORK_DIR}/.git" ]]; then
+    git -C "${WORK_DIR}" fetch --depth 1 origin "refs/tags/${REF}:refs/tags/${REF}" 2>/dev/null \
+      || git -C "${WORK_DIR}" fetch --depth 1 origin "${REF}" 2>/dev/null \
+      || git -C "${WORK_DIR}" fetch --depth 1 origin
+    git -C "${WORK_DIR}" checkout -f "${REF}"
+  elif ! git clone --depth 1 --branch "${REF}" "${INSTALLER_GIT}" "${WORK_DIR}" 2>/dev/null; then
+    git clone --depth 1 "${INSTALLER_GIT}" "${WORK_DIR}"
+    git -C "${WORK_DIR}" checkout -f "${REF}"
+  fi
+  chmod +x "${WORK_DIR}/install.sh" "${WORK_DIR}/scripts/"*.sh 2>/dev/null || true
+  exec bash "${WORK_DIR}/install.sh" "$@"
+fi
+
 # shellcheck source=scripts/lib/common.sh
 source "${REPO_ROOT}/scripts/lib/common.sh"
 
