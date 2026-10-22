@@ -129,4 +129,21 @@ if [[ "${NO_START}" -eq 0 ]]; then
   ${SUDO} systemctl enable --now "${SYSTEMD_UNITS[@]}"
 fi
 
+META_FILE="${INSTALL_DIR}/.install-meta"
+tmp_meta="$(mktemp)"
+cat >"${tmp_meta}" <<META
+MODE=native
+INSTALL_DIR=${INSTALL_DIR}
+INSTALLER_DIR=${REPO_ROOT}
+VERSION=${TAG}
+PORT=${EXPOSED_PORT}
+INSTALLED_AT=$(date '+%F %T')
+META
+${SUDO} install -m 0644 "${tmp_meta}" "${META_FILE}"
+rm -f "${tmp_meta}"
+CTL_LINK="/usr/local/bin/connectorctl"
+${SUDO} chmod +x "${REPO_ROOT}/scripts/connectorctl" 2>/dev/null || true
+${SUDO} ln -sf "${REPO_ROOT}/scripts/connectorctl" "${CTL_LINK}"
+
 log_ok "Installed connector ${TAG} → ${INSTALL_DIR}"
+log_ok "Management: ${CTL_LINK} (status, doctor, logs, restart, backup)"

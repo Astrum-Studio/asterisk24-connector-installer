@@ -1,0 +1,408 @@
+#!/usr/bin/env bash
+# connectorctl — day-2 operations for a native (systemd) Asterisk Connector install.
+#
+# Installed as /usr/local/bin/connectorctl (symlink into the install directory).
+#
+#   connectorctl status
+#   connectorctl doctor
+#   connectorctl logs [app|ami|outbox|cel|recording|all] [-f] [-n 200]
+#   connectorctl restart [service]
+#   connectorctl key
+#   connectorctl backup [dir]
+#   connectorctl update [--source DIR]
+#   connectorctl uninstall [опции uninstall-native.sh]
+
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SELF}")" && pwd)"
+INSTALLER_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh"
+if [[ "${EUID}" -eq 0 ]] && [[ -n "${CONNECTOR_HOME:-}" ]]; then
+  ROOT="${CONNECTOR_HOME}"
+else
+  ROOT="${CONNECTOR_INSTALL_DIR:-${DEFAULT_NATIVE_INSTALL_DIR}}"
+fi
+REPO_ROOT="${INSTALLER_ROOT}"
+
+ENV_FILE="${ROOT}/.env"
+META_FILE="${ROOT}/.install-meta"
+UNITS=(connector-app connector-ami connector-outbox connector-cel connector-recording)
+DEFAULT_BACKUP_DIR="/var/backups/bitrix24-asterisk-connector"
+
+usage() {
+  cat <<EOF
+${C_BOLD}connectorctl${C_RESET} · ${PRODUCT_NAME} v$(product_version "${ROOT}")
+
+${C_DIM}Использование:${C_RESET}  connectorctl <команда> [аргументы]
+
+  ${C_BLUE}status${C_RESET}                    службы, версия, /health, адреса
+  ${C_BLUE}doctor${C_RESET}                    диагностика: БД, .env, права, сеть, записи
+  ${C_BLUE}logs${C_RESET} [служба] [-f] [-n N]  журнал (служба: app|ami|outbox|cel|recording|all)
+  ${C_BLUE}start|stop|restart${C_RESET} [служба]  управление службами (по умолчанию — все)
+  ${C_BLUE}key${C_RESET}                       показать API-ключ коннектора
+  ${C_BLUE}rotate-key${C_RESET}                 новый API-ключ + инвалидация UI-сессий
+  ${C_BLUE}backup${C_RESET} [каталог]           дамп БД + .env + config (default: ${DEFAULT_BACKUP_DIR})
+  ${C_BLUE}update${C_RESET} [--source DIR]      обновить через install.sh (каталог установщика)
+  ${C_BLUE}uninstall${C_RESET} [опции]          снять службы (см. uninstall-native.sh --help)
+  ${C_BLUE}version${C_RESET}                   версия и каталог установки
+  ${C_BLUE}-h, --help${C_RESET}
+
+EOF
+}
+
+# ─── helpers ────────────────────────────────────────────────
+
+need_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      # No -E: do not forward caller env into root (audit L2).
+      exec sudo "${SELF}" "$@"
+    fi
+    die "Команда требует root (sudo не найден)"
+  fi
+}
+
+# short name -> unit name(s)
+resolve_units() {
+  local name="${1:-all}"
+  case "${name}" in
+    all|"") printf '%s\n' "${UNITS[@]}" ;;
+    app|ami|outbox|cel|recording) printf 'connector-%s\n' "${name}" ;;
+    connector-*) printf '%s\n' "${name}" ;;
+    *) die "Неизвестная служба: ${name} (app|ami|outbox|cel|recording|all)" ;;
+  esac
+}
+
+meta_get() { env_get "${META_FILE}" "$1" 2>/dev/null || true; }
+
+env_val() { env_get "${ENV_FILE}" "$1" 2>/dev/null || true; }
+
+app_port() {
+  local p
+  p="$(env_val EXPOSED_APP_PORT)"
+  printf '%s' "${p:-${DEFAULT_PORT}}"
+}
+
+http_code() {
+  curl -s -o /dev/null -m 5 -w '%{http_code}' "$@" 2>/dev/null || printf '000'
+}
+
+unit_uptime() {
+  local ts
+  ts="$(systemctl show -p ActiveEnterTimestamp --value "$1" 2>/dev/null || true)"
+  [[ -n "${ts}" ]] || { printf '—'; return; }
+  local then_ts now d
+  then_ts="$(date -d "${ts}" +%s 2>/dev/null || echo 0)"
+  now="$(date +%s)"
+  d=$((now - then_ts))
+  if   ((d >= 86400)); then printf '%dд %dч' $((d / 86400)) $((d % 86400 / 3600))
+  elif ((d >= 3600));  then printf '%dч %dм' $((d / 3600)) $((d % 3600 / 60))
+  elif ((d >= 60));    then printf '%dм' $((d / 60))
+  else printf '%dс' "${d}"; fi
+}
+
+# ─── status ─────────────────────────────────────────────────
+
+cmd_status() {
+  local port unit state ok=1
+  port="$(app_port)"
+  printf '\n  %s · v%s\n' "${PRODUCT_NAME}" "$(product_version "${ROOT}")"
+  printf "  ${C_DIM}────────────────────────────────────────────────────${C_RESET}\n"
+  printf "  ${C_DIM}%-22s %-10s %-8s${C_RESET}\n" "СЛУЖБА" "СОСТОЯНИЕ" "АПТАЙМ"
+  for unit in "${UNITS[@]}"; do
+    state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+    if [[ "${state}" == "active" ]]; then
+      printf "  ${C_GREEN}●${C_RESET} %-20s %-10s %-8s\n" "${unit}" "работает" "$(unit_uptime "${unit}")"
+    else
+      ok=0
+      printf "  ${C_RED}●${C_RESET} %-20s ${C_RED}%-10s${C_RESET}\n" "${unit}" "${state:-unknown}"
+    fi
+  done
+  printf '\n'
+  local code
+  code="$(http_code "http://127.0.0.1:${port}/health")"
+  if [[ "${code}" == "200" ]]; then
+    print_kv "/health" "${C_GREEN}200 OK${C_RESET}"
+  else
+    ok=0
+    print_kv "/health" "${C_RED}${code}${C_RESET}" "→ connectorctl logs"
+  fi
+  print_kv "Мастер" "$(env_val BASE_URL)/connector/setup"
+  print_kv "Каталог" "${ROOT}"
+  print_kv "Конфиг" "${ENV_FILE}"
+  printf '\n'
+  [[ "${ok}" -eq 1 ]]
+}
+
+# ─── doctor ─────────────────────────────────────────────────
+
+DOCTOR_FAIL=0
+DOCTOR_WARN=0
+d_ok()   { log_ok "$*"; }
+d_warn() { log_warn "$*"; DOCTOR_WARN=$((DOCTOR_WARN + 1)); }
+d_fail() { log_err "$*"; DOCTOR_FAIL=$((DOCTOR_FAIL + 1)); }
+d_hint() { printf "     ${C_DIM}→ %s${C_RESET}\n" "$*"; }
+
+cmd_doctor() {
+  need_root doctor
+  printf '\n  %s · диагностика\n' "${PRODUCT_NAME}"
+  printf "  ${C_DIM}────────────────────────────────────────────────────${C_RESET}\n"
+
+  local unit state port key code
+  port="$(app_port)"
+
+  # 1. systemd
+  for unit in "${UNITS[@]}"; do
+    state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+    if [[ "${state}" == "active" ]]; then
+      d_ok "${unit}: работает"
+    else
+      d_fail "${unit}: ${state:-unknown}"
+      d_hint "journalctl -u ${unit} -n 50 --no-pager"
+    fi
+    if [[ "$(systemctl is-enabled "${unit}" 2>/dev/null || true)" != "enabled" ]]; then
+      d_warn "${unit}: не включён в автозапуск"
+      d_hint "systemctl enable ${unit}"
+    fi
+  done
+
+  # 2. .env
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    d_fail ".env не найден: ${ENV_FILE}"
+  else
+    local mode
+    mode="$(stat -c '%a' "${ENV_FILE}" 2>/dev/null || echo '?')"
+    if [[ "${mode}" =~ ^(600|640|400|440)$ ]]; then
+      d_ok ".env: права ${mode}"
+    else
+      d_warn ".env: права ${mode} (содержит секреты)"
+      d_hint "chown root:${DEFAULT_CONNECTOR_USER} ${ENV_FILE} && chmod 640 ${ENV_FILE}"
+    fi
+    for key in CONNECTOR__API_KEY CONNECTOR__ENCRYPTION_KEY DB__PASSWORD; do
+      [[ -n "$(env_val "${key}")" ]] && d_ok "${key}: задан" || d_fail "${key}: пуст"
+    done
+    case "$(env_val BASE_URL)" in
+      https://*) d_ok "BASE_URL: $(env_val BASE_URL)" ;;
+      http://localhost*|http://127.*) d_warn "BASE_URL указывает на localhost: $(env_val BASE_URL)"
+        d_hint "Bitrix24 не достучится. Задайте внешний https:// адрес в .env и restart" ;;
+      *) d_warn "BASE_URL без HTTPS: $(env_val BASE_URL)"
+         d_hint "Для Bitrix24 нужен https — см. deploy/Caddyfile.example" ;;
+    esac
+  fi
+
+  # 3. PostgreSQL
+  local dbh dbp dbu dbn
+  dbh="$(env_val DB__HOST)"; dbh="${dbh:-127.0.0.1}"
+  dbp="$(env_val DB__PORT)"; dbp="${dbp:-5432}"
+  dbu="$(env_val DB__USER)"; dbn="$(env_val DB__NAME)"
+  if command -v pg_isready >/dev/null 2>&1; then
+    if pg_isready -q -h "${dbh}" -p "${dbp}"; then
+      d_ok "PostgreSQL отвечает на ${dbh}:${dbp}"
+    else
+      d_fail "PostgreSQL не отвечает на ${dbh}:${dbp}"
+      d_hint "systemctl status postgresql"
+    fi
+  fi
+  if command -v psql >/dev/null 2>&1 && [[ -n "${dbu}" ]]; then
+    if PGPASSWORD="$(env_val DB__PASSWORD)" psql -h "${dbh}" -p "${dbp}" -U "${dbu}" -d "${dbn}" -tAc 'SELECT 1' >/dev/null 2>&1; then
+      d_ok "БД ${dbn}: логин ${dbu} работает"
+    else
+      d_fail "БД ${dbn}: не удалось войти как ${dbu}"
+      d_hint "Пароль в .env не совпадает с ролью в PostgreSQL"
+    fi
+  fi
+
+  # 4. HTTP
+  code="$(http_code "http://127.0.0.1:${port}/health")"
+  [[ "${code}" == "200" ]] && d_ok "/health → 200" || { d_fail "/health → ${code}"; d_hint "connectorctl logs -n 100"; }
+  key="$(env_val CONNECTOR__API_KEY)"
+  if [[ -n "${key}" ]]; then
+    code="$(http_code -H "X-Connector-Token: ${key}" "http://127.0.0.1:${port}/status")"
+    [[ "${code}" == "200" ]] && d_ok "/status с ключом → 200" || d_warn "/status с ключом → ${code}"
+  fi
+
+  # 5. Market App
+  local market
+  market="$(env_val MARKET_APP_URL)"
+  if [[ -n "${market}" ]]; then
+    code="$(http_code "${market}")"
+    if [[ "${code}" != "000" ]]; then
+      d_ok "Market App достижим (${market} → ${code})"
+    else
+      d_fail "Market App недоступен: ${market}"
+      d_hint "Проверьте DNS/файрвол исходящих соединений"
+    fi
+  fi
+
+  # 6. Recordings
+  local rec
+  rec="$(env_val RECORDINGS_DIR)"; rec="${rec:-$(env_val RECORDINGS_PATH)}"; rec="${rec:-/var/spool/asterisk/monitor}"
+  if [[ -d "${rec}" ]]; then
+    if runuser -u "${DEFAULT_CONNECTOR_USER}" -- test -r "${rec}" 2>/dev/null; then
+      d_ok "Записи разговоров читаются: ${rec}"
+    else
+      d_warn "Пользователь ${DEFAULT_CONNECTOR_USER} не читает ${rec}"
+      d_hint "usermod -aG asterisk ${DEFAULT_CONNECTOR_USER} && connectorctl restart"
+    fi
+  else
+    d_warn "Каталог записей не найден: ${rec}"
+    d_hint "Если Asterisk на другом хосте — смонтируйте каталог или задайте RECORDINGS_DIR"
+  fi
+
+  # 7. Disk
+  local free
+  free="$(df -Pm "${ROOT}" | awk 'NR==2 {print $4}')"
+  if [[ "${free:-0}" -lt 500 ]]; then
+    d_warn "Мало места на диске с ${ROOT}: ${free} МБ"
+  else
+    d_ok "Свободное место: ${free} МБ"
+  fi
+
+  printf '\n'
+  if [[ "${DOCTOR_FAIL}" -gt 0 ]]; then
+    printf "  ${C_RED}${C_BOLD}Найдено проблем: %d${C_RESET}  ${C_DIM}(предупреждений: %d)${C_RESET}\n\n" "${DOCTOR_FAIL}" "${DOCTOR_WARN}"
+    return 1
+  elif [[ "${DOCTOR_WARN}" -gt 0 ]]; then
+    printf "  ${C_YELLOW}${C_BOLD}Работает, предупреждений: %d${C_RESET}\n\n" "${DOCTOR_WARN}"
+  else
+    printf "  ${C_GREEN}${C_BOLD}Всё в порядке${C_RESET}\n\n"
+  fi
+}
+
+# ─── logs / service control ─────────────────────────────────
+
+cmd_logs() {
+  local target="app" follow=() lines=100 args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--follow) follow=(-f); shift ;;
+      -n|--lines) lines="${2:-100}"; shift 2 ;;
+      --since) args+=(--since "${2:-}"); shift 2 ;;
+      -*) die "Неизвестная опция logs: $1" ;;
+      *) target="$1"; shift ;;
+    esac
+  done
+  local uargs=() u
+  while IFS= read -r u; do uargs+=(-u "${u}"); done < <(resolve_units "${target}")
+  [[ "${EUID}" -ne 0 ]] && ! id -nG | grep -qwE 'systemd-journal|adm' && need_root logs "${target}" "${follow[@]+"${follow[@]}"}" -n "${lines}"
+  exec journalctl "${uargs[@]}" -n "${lines}" --no-pager -o short-iso "${follow[@]+"${follow[@]}"}" "${args[@]+"${args[@]}"}"
+}
+
+cmd_service() {
+  local action="$1"; shift
+  need_root "${action}" "$@"
+  local units=() u
+  while IFS= read -r u; do units+=("${u}"); done < <(resolve_units "${1:-all}")
+  systemctl "${action}" "${units[@]}"
+  log_ok "${action}: ${units[*]}"
+  [[ "${action}" == "stop" ]] || cmd_status || true
+}
+
+cmd_key() {
+  need_root key
+  local k
+  k="$(env_val CONNECTOR__API_KEY)"
+  [[ -n "${k}" ]] || die "CONNECTOR__API_KEY не найден в ${ENV_FILE}"
+  printf '%s\n' "${k}"
+}
+
+cmd_rotate_key() {
+  need_root rotate-key
+  local new_key
+  command -v openssl >/dev/null 2>&1 || die "openssl не найден"
+  new_key="$(openssl rand -base64 32 | tr -d '=/+' | head -c 40)"
+  [[ ${#new_key} -ge 16 ]] || die "не удалось сгенерировать ключ"
+  env_set "${ENV_FILE}" CONNECTOR__API_KEY "${new_key}"
+  # Bump session_epoch in DB so existing UI cookies die immediately.
+  if command -v psql >/dev/null 2>&1; then
+    PGPASSWORD="$(env_val DB__PASSWORD)" psql -h "$(env_val DB__HOST)" -p "$(env_val DB__PORT)" \
+      -U "$(env_val DB__USER)" -d "$(env_val DB__NAME)" -v ON_ERROR_STOP=1 -q <<SQL || true
+UPDATE connector_meta SET session_epoch = COALESCE(session_epoch, 0) + 1, api_key = '${new_key}';
+SQL
+  fi
+  log_ok "CONNECTOR__API_KEY обновлён; UI-сессии инвалидированы"
+  log_info "Перезапустите службы: connectorctl restart"
+  printf '%s\n' "${new_key}"
+}
+
+# ─── backup ─────────────────────────────────────────────────
+
+cmd_backup() {
+  need_root backup "$@"
+  local dir="${1:-${DEFAULT_BACKUP_DIR}}" ts out tmp
+  command -v pg_dump >/dev/null 2>&1 || die "pg_dump не найден (пакет postgresql-client)"
+  ts="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "${dir}"
+  chmod 700 "${dir}"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' RETURN
+
+  PGPASSWORD="$(env_val DB__PASSWORD)" pg_dump -Fc \
+    -h "$(env_val DB__HOST)" -p "$(env_val DB__PORT)" \
+    -U "$(env_val DB__USER)" -d "$(env_val DB__NAME)" -f "${tmp}/db.dump" \
+    || die "pg_dump не удался"
+  cp "${ENV_FILE}" "${tmp}/env"
+  [[ -f "${ROOT}/config/connector.yaml" ]] && cp "${ROOT}/config/connector.yaml" "${tmp}/connector.yaml"
+  cp "${META_FILE}" "${tmp}/install-meta" 2>/dev/null || true
+
+  out="${dir}/connector-${ts}.tar.gz"
+  (umask 077; tar -C "${tmp}" -czf "${out}" .)
+  chmod 600 "${out}"
+  log_ok "Бэкап: ${out} ($(du -h "${out}" | cut -f1))"
+  printf "  ${C_DIM}Содержит секреты (.env, ключи) — храните отдельно и закрыто.${C_RESET}\n"
+  printf "  ${C_DIM}Восстановление БД: tar -xzf <файл> db.dump && pg_restore -c -d <БД> db.dump${C_RESET}\n"
+}
+
+# ─── update ─────────────────────────────────────────────────
+
+cmd_update() {
+  need_root update "$@"
+  local source=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --source) source="${2:-}"; shift 2 ;;
+      *) die "Неизвестная опция update: $1" ;;
+    esac
+  done
+  # In-place default: update the install tree itself (git pull), then re-run installer.
+  source="${source:-$(meta_get INSTALLER_DIR)}"
+  [[ -z "${source}" ]] && source="${INSTALLER_ROOT}"
+  [[ -f "${source}/install.sh" ]] \
+    || die "Не найден install.sh в ${source} (укажите --source /opt/asterisk24-connector-installer)"
+
+  log_info "Источник обновления: ${source}"
+
+  log_info "Резервная копия перед обновлением"
+  cmd_backup
+  local ver
+  ver="$(meta_get VERSION)"
+  [[ -n "${ver}" ]] || ver="v$(product_version "${ROOT}")"
+  exec bash "${source}/install.sh" --mode native --yes --install-dir "${ROOT}" \
+    --port "$(app_port)" --version "${ver}"
+}
+
+# ─── dispatch ───────────────────────────────────────────────
+
+cmd="${1:-}"
+[[ $# -gt 0 ]] && shift
+case "${cmd}" in
+  status)  cmd_status ;;
+  doctor)  cmd_doctor ;;
+  logs)    cmd_logs "$@" ;;
+  start|stop|restart) cmd_service "${cmd}" "$@" ;;
+  key)     cmd_key ;;
+  rotate-key|rotate_key) cmd_rotate_key ;;
+  backup)  cmd_backup "$@" ;;
+  update|upgrade) cmd_update "$@" ;;
+  uninstall) need_root uninstall "$@"; exec bash "${INSTALLER_ROOT}/scripts/uninstall-native.sh" "$@" ;;
+  version|-v|--version)
+    print_kv "Версия" "$(product_version "${ROOT}")"
+    print_kv "Каталог" "${ROOT}"
+    print_kv "Источник" "$(meta_get SOURCE_DIR)"
+    print_kv "Установлено" "$(meta_get INSTALLED_AT)"
+    ;;
+  ""|-h|--help|help) usage ;;
+  *) log_err "Неизвестная команда: ${cmd}"; usage; exit 1 ;;
+esac

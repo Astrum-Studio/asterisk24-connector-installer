@@ -17,3 +17,7 @@ Broken install paths (raw CDN cache, bad `SHA256SUMS` paths, piped autoinstaller
 
 ## v1.0.3
 - Alembic migrations in native binary tarball.
+
+## v1.0.4
+- connectorctl + uninstall-native; install symlink to /usr/local/bin.
+
