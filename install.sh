@@ -5,49 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 
-# curl …/install.sh alone has no scripts/ tree — clone installer at --version and re-exec.
 if [[ ! -f "${REPO_ROOT}/scripts/lib/common.sh" ]]; then
-  INSTALLER_REPO="${INSTALLER_REPO:-Astrum-Studio/asterisk24-connector-installer}"
-  INSTALLER_GIT="${INSTALLER_GIT:-https://github.com/${INSTALLER_REPO}.git}"
-  WORK_DIR="${INSTALLER_WORK_DIR:-/opt/asterisk24-connector-installer}"
-  REF="v1.0.0"
-  args=("$@")
-  i=0
-  while [[ $i -lt ${#args[@]} ]]; do
-    case "${args[$i]}" in
-      --version)
-        REF="${args[$((i + 1))]:-}"
-        REF="${REF#v}"
-        REF="v${REF}"
-        i=$((i + 2))
-        ;;
-      *) i=$((i + 1)) ;;
-    esac
-  done
-  [[ -n "${REF}" ]] || REF="v1.0.0"
-  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    echo "Run as root: sudo bash install.sh …" >&2
-    exit 1
-  fi
-  command -v git >/dev/null 2>&1 || {
-    echo "git is required to bootstrap the installer" >&2
-    exit 1
-  }
-  echo "›  Fetching full installer ${INSTALLER_REPO} @ ${REF} → ${WORK_DIR}" >&2
-  mkdir -p "$(dirname "${WORK_DIR}")"
-  if [[ -d "${WORK_DIR}/.git" ]]; then
-    git -C "${WORK_DIR}" fetch --depth 1 origin "refs/tags/${REF}:refs/tags/${REF}" --force 2>/dev/null \
-      || git -C "${WORK_DIR}" fetch --depth 1 origin "${REF}" --force 2>/dev/null \
-      || git -C "${WORK_DIR}" fetch --depth 1 origin --force
-    git -C "${WORK_DIR}" checkout -f "${REF}"
-    git -C "${WORK_DIR}" reset --hard "${REF}"
-  elif ! git clone --depth 1 --branch "${REF}" "${INSTALLER_GIT}" "${WORK_DIR}" 2>/dev/null; then
-    git clone --depth 1 "${INSTALLER_GIT}" "${WORK_DIR}"
-    git -C "${WORK_DIR}" checkout -f "${REF}"
-    git -C "${WORK_DIR}" reset --hard "${REF}"
-  fi
-  chmod +x "${WORK_DIR}/install.sh" "${WORK_DIR}/scripts/"*.sh 2>/dev/null || true
-  exec bash "${WORK_DIR}/install.sh" "$@"
+  echo "Use autoinstaller (do not download install.sh alone):" >&2
+  echo "  curl -fsSL https://raw.githubusercontent.com/Astrum-Studio/asterisk24-connector-installer/v1.0.0/scripts/autoinstaller.sh | sudo bash -s -- --mode native --version v1.0.0 --yes" >&2
+  exit 1
 fi
 
 # shellcheck source=scripts/lib/common.sh
@@ -73,7 +34,7 @@ usage() {
 
   ${C_DIM}One-liner (рекомендуется):${C_RESET}
     curl -fsSL https://raw.githubusercontent.com/${INSTALLER_REPO}/v1.0.0/scripts/autoinstaller.sh \\
-      | sudo bash -s -- --mode docker --version v1.0.0 --ghcr-token "\$TOKEN" --yes
+      | sudo bash -s -- --mode docker --version v1.0.0 --yes
     curl -fsSL https://raw.githubusercontent.com/${INSTALLER_REPO}/v1.0.0/scripts/autoinstaller.sh \\
       | sudo bash -s -- --mode native --version v1.0.0 --yes
 
@@ -81,7 +42,7 @@ usage() {
 
   ${C_BLUE}--mode${C_RESET} MODE          native | docker (default: docker)
   ${C_BLUE}--version${C_RESET} TAG        release tag, e.g. v1.0.0
-  ${C_BLUE}--ghcr-token${C_RESET} TOKEN   required for docker (private GHCR)
+  ${C_BLUE}--ghcr-token${C_RESET} TOKEN   optional (public GHCR image; for private registries)
   ${C_BLUE}--skip-docker${C_RESET}        Docker уже установлен
   ${C_BLUE}--port${C_RESET} PORT          host port (default ${DEFAULT_PORT})
   ${C_BLUE}-y, --yes${C_RESET}             non-interactive
@@ -126,8 +87,9 @@ case "${MODE}" in
   docker)
     require_root_or_sudo "docker install"
     [[ "${SKIP_DOCKER}" -eq 0 ]] && bash "${REPO_ROOT}/scripts/install-docker.sh" "${YES[@]+"${YES[@]}"}"
-    [[ -n "${GHCR_TOKEN}" ]] || die "Docker mode requires --ghcr-token (private GHCR image)"
-    echo "${GHCR_TOKEN}" | docker login ghcr.io --username "token" --password-stdin
+    if [[ -n "${GHCR_TOKEN}" ]]; then
+      echo "${GHCR_TOKEN}" | docker login ghcr.io --username "token" --password-stdin
+    fi
     INIT_ARGS=(--tag "${CONNECTOR_VERSION}")
     [[ "${FORCE_ENV}" -eq 1 ]] && INIT_ARGS+=(--force)
     [[ "${PORT_FROM_CLI}" -eq 1 ]] && INIT_ARGS+=(--port "${EXPOSED_PORT}")

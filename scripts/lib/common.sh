@@ -345,22 +345,24 @@ has_systemd() {
   command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system || -d /sys/fs/cgroup/systemd ]]
 }
 
-# Clone or update public installer repo at an exact tag (handles moved tags / stale /opt).
-sync_installer_git_repo() {
-  local ref="$1" work_dir="$2" git_url="${3:-https://github.com/${INSTALLER_REPO}.git}"
+# Download installer tree from GitHub tag archive (no git client required).
+fetch_installer_archive() {
+  local ref="$1" work_dir="$2"
+  local url tmp parent src
   case "${ref}" in v*) ;; *) ref="v${ref#v}" ;; esac
-  mkdir -p "$(dirname "${work_dir}")"
-  if [[ -d "${work_dir}/.git" ]]; then
-    git -C "${work_dir}" fetch --depth 1 origin "refs/tags/${ref}:refs/tags/${ref}" --force 2>/dev/null \
-      || git -C "${work_dir}" fetch --depth 1 origin "${ref}" --force 2>/dev/null \
-      || git -C "${work_dir}" fetch --depth 1 origin --force
-    git -C "${work_dir}" checkout -f "${ref}"
-    git -C "${work_dir}" reset --hard "${ref}"
-  elif ! git clone --depth 1 --branch "${ref}" "${git_url}" "${work_dir}" 2>/dev/null; then
-    git clone --depth 1 "${git_url}" "${work_dir}"
-    git -C "${work_dir}" checkout -f "${ref}"
-    git -C "${work_dir}" reset --hard "${ref}"
-  fi
+  url="https://github.com/${INSTALLER_REPO}/archive/refs/tags/${ref}.tar.gz"
+  tmp="$(mktemp -d)"
+  curl -fsSL "${url}" -o "${tmp}/installer.tgz" || die "Cannot download installer ${ref}" "check tag exists on GitHub"
+  tar -xzf "${tmp}/installer.tgz" -C "${tmp}"
+  src="$(find "${tmp}" -maxdepth 1 -type d -name 'asterisk24-connector-installer-*' | head -1)"
+  rm -rf "${tmp}/installer.tgz"
+  [[ -n "${src}" && -f "${src}/install.sh" ]] || die "Invalid installer archive for ${ref}"
+  parent="$(dirname "${work_dir}")"
+  mkdir -p "${parent}"
+  rm -rf "${work_dir}"
+  mv "${src}" "${work_dir}"
+  rm -rf "${tmp}"
+  chmod +x "${work_dir}/install.sh" "${work_dir}/scripts/"*.sh 2>/dev/null || true
 }
 
 # Verify Release tarball (SHA256SUMS may use basename or CI paths).

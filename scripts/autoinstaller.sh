@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# One-liner bootstrap: clone public installer at release tag and run install.sh.
+# One-liner: download installer @ tag and run install.sh (no git).
 #
 #   curl -fsSL https://raw.githubusercontent.com/Astrum-Studio/asterisk24-connector-installer/v1.0.0/scripts/autoinstaller.sh \
-#     | sudo bash -s -- --mode docker --version v1.0.0 --ghcr-token "$TOKEN" --yes
+#     | sudo bash -s -- --mode docker --version v1.0.0 --yes
 set -euo pipefail
 
 _AUTO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${_AUTO_DIR}/lib/common.sh"
 
-INSTALLER_REPO="${INSTALLER_REPO:-Astrum-Studio/asterisk24-connector-installer}"
-INSTALLER_GIT="${INSTALLER_GIT:-https://github.com/${INSTALLER_REPO}.git}"
 DEFAULT_WORK_DIR="${DEFAULT_WORK_DIR:-/opt/asterisk24-connector-installer}"
 DEFAULT_REF="${DEFAULT_REF:-v1.0.0}"
 
@@ -25,13 +23,14 @@ EXTRA_ARGS=()
 
 usage() {
   cat <<EOF
-Asterisk24 Connector autoinstaller (binary distribution).
+Asterisk24 Connector autoinstaller.
 
   curl -fsSL https://raw.githubusercontent.com/${INSTALLER_REPO}/v1.0.0/scripts/autoinstaller.sh \\
     | sudo bash -s -- --mode native --version v1.0.0 --yes
 
-Options: --mode docker|native  --version|--ref TAG  --install-dir DIR
-         --ghcr-token TOKEN  --skip-docker  --port N  -y/--yes  -h/--help
+Options: --mode docker|native  --version TAG  --install-dir DIR
+         --ghcr-token TOKEN (optional, public image by default)
+         --skip-docker  --port N  -y/--yes  -h/--help
 EOF
 }
 
@@ -56,16 +55,12 @@ done
 case "${REF}" in v*) ;; *) REF="v${REF#v}" ;; esac
 WORK_DIR="${WORK_DIR:-${DEFAULT_WORK_DIR}}"
 
-if [[ "${EUID}" -ne 0 ]]; then
-  echo "Run as root: curl … | sudo bash -s -- …" >&2
-  exit 1
-fi
-command -v git >/dev/null 2>&1 || die "git is required" "apt install git"
+[[ "${EUID}" -ne 0 ]] && die "Run as root: curl … | sudo bash -s -- …"
+command -v curl >/dev/null 2>&1 || die "curl is required"
+command -v tar >/dev/null 2>&1 || die "tar is required"
 
-log_info "Syncing ${INSTALLER_REPO} @ ${REF} → ${WORK_DIR}"
-sync_installer_git_repo "${REF}" "${WORK_DIR}" "${INSTALLER_GIT}"
-
-chmod +x "${WORK_DIR}/install.sh" "${WORK_DIR}/scripts/"*.sh 2>/dev/null || true
+log_info "Installer ${INSTALLER_REPO} @ ${REF} → ${WORK_DIR}"
+fetch_installer_archive "${REF}" "${WORK_DIR}"
 
 INSTALL_ARGS=(--mode "${MODE}" --version "${REF}")
 [[ -n "${GHCR_TOKEN}" ]] && INSTALL_ARGS+=(--ghcr-token "${GHCR_TOKEN}")
