@@ -121,7 +121,7 @@ ${SUDO} chown -R root:root "${INSTALL_DIR}"
 ${SUDO} chmod -R go+rX,go-w "${INSTALL_DIR}"
 
 log_info "Database migrations…"
-${SUDO} -u "${DEFAULT_CONNECTOR_USER}" env ENV_FILE="${INSTALL_DIR}/.env" CONNECTOR_HOME="${INSTALL_DIR}" \
+run_as_user "${DEFAULT_CONNECTOR_USER}" env ENV_FILE="${INSTALL_DIR}/.env" CONNECTOR_HOME="${INSTALL_DIR}" \
   "${INSTALL_DIR}/connector" migrate
 
 ${SUDO} systemctl daemon-reload

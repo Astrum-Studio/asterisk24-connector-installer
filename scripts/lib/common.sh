@@ -324,6 +324,21 @@ require_root_or_sudo() {
   die "Нужны права root или sudo для ${reason}"
 }
 
+# Run command as another user (root shell must not use bare "${SUDO} -u" — SUDO is empty when root).
+run_as_user() {
+  local user="$1"
+  shift
+  if [[ "${EUID}" -eq 0 ]]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "${user}" -- "$@"
+    else
+      su -s /bin/bash "${user}" -c "$(printf '%q ' "$@")"
+    fi
+  else
+    sudo -u "${user}" "$@"
+  fi
+}
+
 detect_arch() {
   local arch
   arch="$(uname -m)"

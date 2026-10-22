@@ -1,6 +1,10 @@
 # Changelog
 
-## v1.0.1 (2026-10-22) — supported
+## v1.0.2 (2026-10-22) — supported
+
+- Fix native install as root: `migrate` via `runuser` (was `${SUDO} -u` → `-u: command not found`).
+
+## v1.0.1 (2026-10-22)
 
 - **Install:** `curl` autoinstaller from **GitHub Releases** (not `raw.githubusercontent.com`).
 - Native: binary + `SHA256SUMS` from this release; Docker: public `ghcr.io/astrum-studio/asterisk24-connector`.

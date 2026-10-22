@@ -12,7 +12,7 @@ Public installer for **Astrum Bitrix24 Asterisk Connector**.
 **Native:**
 
 ```bash
-VER=v1.0.1
+VER=v1.0.2
 curl -fsSL "https://github.com/Astrum-Studio/asterisk24-connector-installer/releases/download/${VER}/autoinstaller.sh" \
   | bash -s -- --mode native --version "${VER}" --yes
 ```
@@ -20,7 +20,7 @@ curl -fsSL "https://github.com/Astrum-Studio/asterisk24-connector-installer/rele
 **Docker:**
 
 ```bash
-VER=v1.0.1
+VER=v1.0.2
 curl -fsSL "https://github.com/Astrum-Studio/asterisk24-connector-installer/releases/download/${VER}/autoinstaller.sh" \
   | bash -s -- --mode docker --version "${VER}" --yes
 ```
