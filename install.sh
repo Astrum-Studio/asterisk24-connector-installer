@@ -23,6 +23,8 @@ VERSION="${CONNECTOR_VERSION:-1.0.0}"
 GHCR_TOKEN=""
 EXPOSED_PORT="${DEFAULT_PORT}"
 PORT_FROM_CLI=0
+INSTALL_DIR=""
+INSTALL_DIR_FROM_CLI=0
 MARKET_APP_URL=""
 BASE_URL=""
 
@@ -42,6 +44,7 @@ usage() {
 
   ${C_BLUE}--mode${C_RESET} MODE          native | docker (default: docker)
   ${C_BLUE}--version${C_RESET} TAG        release tag, e.g. v1.0.0
+  ${C_BLUE}--install-dir${C_RESET} DIR    native install path (default: /opt/asterisk24-connector)
   ${C_BLUE}--ghcr-token${C_RESET} TOKEN   optional (public GHCR image; for private registries)
   ${C_BLUE}--skip-docker${C_RESET}        Docker уже установлен
   ${C_BLUE}--port${C_RESET} PORT          host port (default ${DEFAULT_PORT})
@@ -56,6 +59,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="${2:-}"; shift 2 ;;
     --version) VERSION="${2#v}"; shift 2 ;;
+    --install-dir) INSTALL_DIR="${2:-}"; INSTALL_DIR_FROM_CLI=1; shift 2 ;;
     --ghcr-token) GHCR_TOKEN="${2:-}"; shift 2 ;;
     --skip-docker) SKIP_DOCKER=1; shift ;;
     --port) EXPOSED_PORT="${2:-}"; PORT_FROM_CLI=1; shift 2 ;;
@@ -76,6 +80,7 @@ YES=()
 case "${MODE}" in
   native)
     ARGS=(--version "v${CONNECTOR_VERSION}")
+    [[ "${INSTALL_DIR_FROM_CLI}" -eq 1 ]] && ARGS+=(--install-dir "${INSTALL_DIR}")
     [[ "${PORT_FROM_CLI}" -eq 1 ]] && ARGS+=(--port "${EXPOSED_PORT}")
     [[ "${NO_START}" -eq 1 ]] && ARGS+=(--no-start)
     [[ "${FORCE_ENV}" -eq 1 ]] && ARGS+=(--force-env)

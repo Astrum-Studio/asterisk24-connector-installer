@@ -19,6 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${SELF}")" && pwd)"
 INSTALLER_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/detect-recordings.sh
+source "${SCRIPT_DIR}/lib/detect-recordings.sh"
 if [[ "${EUID}" -eq 0 ]] && [[ -n "${CONNECTOR_HOME:-}" ]]; then
   ROOT="${CONNECTOR_HOME}"
 else
@@ -39,6 +41,8 @@ ${C_DIM}Использование:${C_RESET}  connectorctl <команда> [а
 
   ${C_BLUE}status${C_RESET}                    службы, версия, /health, адреса
   ${C_BLUE}doctor${C_RESET}                    диагностика: БД, .env, права, сеть, записи
+  ${C_BLUE}detect-recordings${C_RESET}          найти каталог MixMonitor (FreePBX/Asterisk)
+  ${C_BLUE}fix-recordings${C_RESET} [--dir D]   прописать RECORDINGS_DIR + systemd ReadOnlyPaths
   ${C_BLUE}logs${C_RESET} [служба] [-f] [-n N]  журнал (служба: app|ami|outbox|cel|recording|all)
   ${C_BLUE}start|stop|restart${C_RESET} [служба]  управление службами (по умолчанию — все)
   ${C_BLUE}key${C_RESET}                       показать API-ключ коннектора
@@ -237,18 +241,32 @@ cmd_doctor() {
   fi
 
   # 6. Recordings
-  local rec
+  local rec detected="" recent ropaths
   rec="$(env_val RECORDINGS_DIR)"; rec="${rec:-$(env_val RECORDINGS_PATH)}"; rec="${rec:-/var/spool/asterisk/monitor}"
+  detected="$(detect_recordings_dir 2>/dev/null || true)"
   if [[ -d "${rec}" ]]; then
+    recent="$(find "${rec}" -type f \( -name '*.wav' -o -name '*.mp3' \) -mtime -7 2>/dev/null | head -5 | wc -l | tr -d ' ' || true)"
+    recent="${recent:-0}"
     if runuser -u "${DEFAULT_CONNECTOR_USER}" -- test -r "${rec}" 2>/dev/null; then
-      d_ok "Записи разговоров читаются: ${rec}"
+      d_ok "Записи: ${rec} (файлов за 7д: ${recent})"
     else
       d_warn "Пользователь ${DEFAULT_CONNECTOR_USER} не читает ${rec}"
-      d_hint "usermod -aG asterisk ${DEFAULT_CONNECTOR_USER} && connectorctl restart"
+      d_hint "sudo connectorctl fix-recordings"
+    fi
+    ropaths="$(systemctl show connector-recording.service -p ReadOnlyPaths --value 2>/dev/null || true)"
+    if [[ -n "${ropaths}" && "${ropaths}" == *"${rec}"* ]]; then
+      d_ok "systemd ReadOnlyPaths включает каталог записей"
+    else
+      d_warn "systemd может блокировать доступ к записям (ProtectSystem=strict)"
+      d_hint "sudo connectorctl fix-recordings"
     fi
   else
-    d_warn "Каталог записей не найден: ${rec}"
-    d_hint "Если Asterisk на другом хосте — смонтируйте каталог или задайте RECORDINGS_DIR"
+    d_fail "Каталог записей не найден: ${rec}"
+    d_hint "sudo connectorctl fix-recordings"
+  fi
+  if [[ -n "${detected}" && -n "${rec}" && "$(readlink -f "${detected}" 2>/dev/null || true)" != "$(readlink -f "${rec}" 2>/dev/null || true)" ]]; then
+    d_warn "Автодетект видит другой каталог: ${detected}"
+    d_hint "sudo connectorctl fix-recordings   # или --dir ${detected}"
   fi
 
   # 7. Disk
@@ -379,8 +397,87 @@ cmd_update() {
   local ver
   ver="$(meta_get VERSION)"
   [[ -n "${ver}" ]] || ver="v$(product_version "${ROOT}")"
+  # Prefer install-native.sh: top-level install.sh historically rejected --install-dir.
+  local native="${source}/scripts/install-native.sh"
+  if [[ -f "${native}" ]]; then
+    exec bash "${native}" --yes --install-dir "${ROOT}" \
+      --port "$(app_port)" --version "${ver}"
+  fi
   exec bash "${source}/install.sh" --mode native --yes --install-dir "${ROOT}" \
     --port "$(app_port)" --version "${ver}"
+}
+
+cmd_detect_recordings() {
+  printf '\n  %s · поиск каталога записей\n' "${PRODUCT_NAME}"
+  printf "  ${C_DIM}────────────────────────────────────────────────────${C_RESET}\n"
+  local score path reason best=""
+  if ! list_recordings_candidates >/tmp/connector-rec-cands.$$ 2>/dev/null; then
+    d_fail "Кандидаты не найдены"
+    rm -f /tmp/connector-rec-cands.$$
+    return 1
+  fi
+  while IFS=$'\t' read -r score path reason; do
+    [[ -n "${path}" ]] || continue
+    printf "  ${C_DIM}%4s${C_RESET}  %s  ${C_DIM}(%s)${C_RESET}\n" "${score}" "${path}" "${reason}"
+    [[ -z "${best}" ]] && best="${path}"
+  done < /tmp/connector-rec-cands.$$
+  rm -f /tmp/connector-rec-cands.$$
+  printf '\n'
+  if [[ -n "${best}" ]]; then
+    print_kv "Выбор" "${best}"
+    printf '%s\n' "${best}"
+    return 0
+  fi
+  return 1
+}
+
+cmd_fix_recordings() {
+  need_root fix-recordings "$@"
+  local prefer="" rec protect name rendered unit_src unit_protect
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir|--recordings-dir) prefer="${2:-}"; shift 2 ;;
+      -h|--help)
+        printf 'Использование: connectorctl fix-recordings [--dir /path/to/monitor]\n'
+        return 0
+        ;;
+      *) die "Неизвестная опция fix-recordings: $1" ;;
+    esac
+  done
+
+  if [[ -n "${prefer}" ]]; then
+    [[ -d "${prefer}" ]] || die "Каталог не существует: ${prefer}"
+    rec="$(readlink -f "${prefer}")"
+  else
+    rec="$(detect_recordings_dir)" || die "Не удалось найти каталог записей FreePBX/Asterisk"
+  fi
+
+  env_set "${ENV_FILE}" RECORDINGS_DIR "${rec}"
+  env_set "${ENV_FILE}" RECORDINGS_PATH "${rec}"
+  chown "root:${DEFAULT_CONNECTOR_USER}" "${ENV_FILE}"
+  chmod 640 "${ENV_FILE}"
+  ensure_recordings_readable "${rec}" "${DEFAULT_CONNECTOR_USER}" || true
+  protect="$(recordings_protect_home_value "${rec}" "${ROOT}")"
+
+  for name in connector-recording connector-outbox; do
+    unit_src="${INSTALLER_ROOT}/deploy/systemd/${name}.service"
+    [[ -f "${unit_src}" ]] || die "Нет unit-шаблона: ${unit_src}"
+    rendered="$(mktemp)"
+    unit_protect="${protect}"
+    sed \
+      -e "s|__INSTALL_DIR__|${ROOT}|g" \
+      -e "s|__LISTEN_PORT__|$(app_port)|g" \
+      -e "s|__PROTECT_HOME__|${unit_protect}|g" \
+      -e "s|__RECORDINGS_DIR__|${rec}|g" \
+      "${unit_src}" >"${rendered}"
+    install -m 0644 "${rendered}" "/etc/systemd/system/${name}.service"
+    rm -f "${rendered}"
+  done
+  systemctl daemon-reload
+  systemctl restart connector-recording connector-outbox
+  log_ok "RECORDINGS_DIR=${rec}"
+  log_ok "Обновлены connector-recording / connector-outbox (ProtectHome=${protect})"
+  print_kv "Проверка" "connectorctl doctor"
 }
 
 # ─── dispatch ───────────────────────────────────────────────
@@ -390,6 +487,8 @@ cmd="${1:-}"
 case "${cmd}" in
   status)  cmd_status ;;
   doctor)  cmd_doctor ;;
+  detect-recordings|detect_recordings) cmd_detect_recordings ;;
+  fix-recordings|fix_recordings) cmd_fix_recordings "$@" ;;
   logs)    cmd_logs "$@" ;;
   start|stop|restart) cmd_service "${cmd}" "$@" ;;
   key)     cmd_key ;;
