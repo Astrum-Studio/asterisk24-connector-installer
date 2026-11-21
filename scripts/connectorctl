@@ -9,7 +9,8 @@
 #   connectorctl restart [service]
 #   connectorctl key
 #   connectorctl backup [dir]
-#   connectorctl update [--source DIR]
+#   connectorctl update [--check] [--version vX.Y.Z] [--allow-major]
+#   connectorctl auto-update enable|disable|status
 #   connectorctl uninstall [опции uninstall-native.sh]
 
 set -euo pipefail
@@ -28,10 +29,30 @@ else
 fi
 REPO_ROOT="${INSTALLER_ROOT}"
 
+# Install mode: native (systemd, ROOT = install dir) or docker (compose project = installer dir).
+MODE="${CONNECTORCTL_MODE:-}"
+if [[ -z "${MODE}" ]]; then
+  if [[ -f "${INSTALLER_ROOT}/.install-meta" ]] && [[ "$(env_get "${INSTALLER_ROOT}/.install-meta" MODE)" == "docker" ]]; then
+    MODE=docker
+  elif [[ ! -f "${ROOT}/.install-meta" && -f "${INSTALLER_ROOT}/docker-compose.yml" && -f "${INSTALLER_ROOT}/.env" ]]; then
+    MODE=docker   # docker installs made before .install-meta existed
+  else
+    MODE=native
+  fi
+fi
+[[ "${MODE}" == "docker" ]] && ROOT="${INSTALLER_ROOT}"
+
 ENV_FILE="${ROOT}/.env"
 META_FILE="${ROOT}/.install-meta"
+# shellcheck disable=SC2034  # set by cmd_backup, read by lib/update.sh
+LAST_BACKUP=""
 UNITS=(connector-app connector-ami connector-outbox connector-cel connector-recording)
-DEFAULT_BACKUP_DIR="/var/backups/bitrix24-asterisk-connector"
+DEFAULT_BACKUP_DIR="${CONNECTORCTL_BACKUP_DIR:-/var/backups/bitrix24-asterisk-connector}"
+
+# shellcheck source=lib/update.sh
+source "${SCRIPT_DIR}/lib/update.sh"
+# shellcheck source=lib/autoupdate.sh
+source "${SCRIPT_DIR}/lib/autoupdate.sh"
 
 usage() {
   cat <<EOF
@@ -48,7 +69,8 @@ ${C_DIM}Использование:${C_RESET}  connectorctl <команда> [а
   ${C_BLUE}key${C_RESET}                       показать API-ключ коннектора
   ${C_BLUE}rotate-key${C_RESET}                 новый API-ключ + инвалидация UI-сессий
   ${C_BLUE}backup${C_RESET} [каталог]           дамп БД + .env + config (default: ${DEFAULT_BACKUP_DIR})
-  ${C_BLUE}update${C_RESET} [--source DIR]      обновить через install.sh (каталог установщика)
+  ${C_BLUE}update${C_RESET} [--check|--version V]  обновить коннектор (native и docker); --check — только проверить
+  ${C_BLUE}auto-update${C_RESET} enable|disable|status  автообновление minor/patch по расписанию (по умолчанию выкл.)
   ${C_BLUE}uninstall${C_RESET} [опции]          снять службы (см. uninstall-native.sh --help)
   ${C_BLUE}version${C_RESET}                   версия и каталог установки
   ${C_BLUE}-h, --help${C_RESET}
@@ -59,6 +81,7 @@ EOF
 # ─── helpers ────────────────────────────────────────────────
 
 need_root() {
+  [[ "${CONNECTORCTL_ALLOW_NONROOT:-0}" == "1" ]] && return 0   # test seam
   if [[ "${EUID}" -ne 0 ]]; then
     if command -v sudo >/dev/null 2>&1; then
       # No -E: do not forward caller env into root (audit L2).
@@ -350,17 +373,20 @@ SQL
 cmd_backup() {
   need_root backup "$@"
   local dir="${1:-${DEFAULT_BACKUP_DIR}}" ts out tmp
+  if [[ "${MODE}" == "docker" ]]; then
+    upd_backup_docker "${dir}"
+    return $?
+  fi
   command -v pg_dump >/dev/null 2>&1 || die "pg_dump не найден (пакет postgresql-client)"
   ts="$(date +%Y%m%d-%H%M%S)"
   mkdir -p "${dir}"
   chmod 700 "${dir}"
   tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp}"' RETURN
 
   PGPASSWORD="$(env_val DB__PASSWORD)" pg_dump -Fc \
     -h "$(env_val DB__HOST)" -p "$(env_val DB__PORT)" \
     -U "$(env_val DB__USER)" -d "$(env_val DB__NAME)" -f "${tmp}/db.dump" \
-    || die "pg_dump не удался"
+    || { rm -rf "${tmp}"; die "pg_dump не удался"; }
   cp "${ENV_FILE}" "${tmp}/env"
   [[ -f "${ROOT}/config/connector.yaml" ]] && cp "${ROOT}/config/connector.yaml" "${tmp}/connector.yaml"
   cp "${META_FILE}" "${tmp}/install-meta" 2>/dev/null || true
@@ -368,43 +394,11 @@ cmd_backup() {
   out="${dir}/connector-${ts}.tar.gz"
   (umask 077; tar -C "${tmp}" -czf "${out}" .)
   chmod 600 "${out}"
+  rm -rf "${tmp}"
+  LAST_BACKUP="${out}"
   log_ok "Бэкап: ${out} ($(du -h "${out}" | cut -f1))"
   printf "  ${C_DIM}Содержит секреты (.env, ключи) — храните отдельно и закрыто.${C_RESET}\n"
   printf "  ${C_DIM}Восстановление БД: tar -xzf <файл> db.dump && pg_restore -c -d <БД> db.dump${C_RESET}\n"
-}
-
-# ─── update ─────────────────────────────────────────────────
-
-cmd_update() {
-  need_root update "$@"
-  local source=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --source) source="${2:-}"; shift 2 ;;
-      *) die "Неизвестная опция update: $1" ;;
-    esac
-  done
-  # In-place default: update the install tree itself (git pull), then re-run installer.
-  source="${source:-$(meta_get INSTALLER_DIR)}"
-  [[ -z "${source}" ]] && source="${INSTALLER_ROOT}"
-  [[ -f "${source}/install.sh" ]] \
-    || die "Не найден install.sh в ${source} (укажите --source /opt/asterisk24-connector-installer)"
-
-  log_info "Источник обновления: ${source}"
-
-  log_info "Резервная копия перед обновлением"
-  cmd_backup
-  local ver
-  ver="$(meta_get VERSION)"
-  [[ -n "${ver}" ]] || ver="v$(product_version "${ROOT}")"
-  # Prefer install-native.sh: top-level install.sh historically rejected --install-dir.
-  local native="${source}/scripts/install-native.sh"
-  if [[ -f "${native}" ]]; then
-    exec bash "${native}" --yes --install-dir "${ROOT}" \
-      --port "$(app_port)" --version "${ver}"
-  fi
-  exec bash "${source}/install.sh" --mode native --yes --install-dir "${ROOT}" \
-    --port "$(app_port)" --version "${ver}"
 }
 
 cmd_detect_recordings() {
@@ -484,6 +478,13 @@ cmd_fix_recordings() {
 
 cmd="${1:-}"
 [[ $# -gt 0 ]] && shift
+if [[ "${MODE}" == "docker" ]]; then
+  case "${cmd}" in
+    update|upgrade|auto-update|auto_update|backup|version|-v|--version|""|-h|--help|help) ;;
+    *) die "Команда '${cmd}' доступна только для native-установки" \
+         "для docker: cd ${ROOT} && docker compose ps|logs|restart (доступны: update, auto-update, backup, version)" ;;
+  esac
+fi
 case "${cmd}" in
   status)  cmd_status ;;
   doctor)  cmd_doctor ;;
@@ -495,9 +496,11 @@ case "${cmd}" in
   rotate-key|rotate_key) cmd_rotate_key ;;
   backup)  cmd_backup "$@" ;;
   update|upgrade) cmd_update "$@" ;;
+  auto-update|auto_update) cmd_auto_update "$@" ;;
   uninstall) need_root uninstall "$@"; exec bash "${INSTALLER_ROOT}/scripts/uninstall-native.sh" "$@" ;;
   version|-v|--version)
-    print_kv "Версия" "$(product_version "${ROOT}")"
+    print_kv "Режим" "${MODE}"
+    print_kv "Версия" "$(upd_current_version 2>/dev/null || true) $(product_version "${ROOT}")"
     print_kv "Каталог" "${ROOT}"
     print_kv "Источник" "$(meta_get SOURCE_DIR)"
     print_kv "Установлено" "$(meta_get INSTALLED_AT)"

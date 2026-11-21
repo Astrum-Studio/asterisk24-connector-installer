@@ -1,0 +1,12 @@
+[Unit]
+Description=Asterisk Connector: hourly tick for auto-update (window/interval enforced by connectorctl)
+Documentation=https://github.com/Astrum-Studio/asterisk24-connector-installer
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+Unit=connectorctl-update.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Asterisk Connector: scheduled update check (connectorctl auto-update)
+Documentation=https://github.com/Astrum-Studio/asterisk24-connector-installer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__CTL__ auto-update run
+SyslogIdentifier=connectorctl-update
+# Updates download a release, restart services and may roll back: allow plenty of time.
+TimeoutStartSec=3600

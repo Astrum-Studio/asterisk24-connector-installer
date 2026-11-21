@@ -16,3 +16,7 @@ jobs:
         run: |
           curl -fsSL "https://github.com/Astrum-Studio/asterisk24-connector-installer/releases/download/v1.0.1/autoinstaller.sh" \
             | bash -s -- --help
+      - name: shellcheck (update engine)
+        run: shellcheck -x -S warning scripts/lib/update.sh scripts/lib/autoupdate.sh tests/test-update.sh
+      - name: Update / auto-update tests (offline, mocked GitHub)
+        run: bash tests/test-update.sh

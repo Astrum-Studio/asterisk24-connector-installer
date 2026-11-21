@@ -107,7 +107,18 @@ case "${MODE}" in
       docker compose pull
       docker compose up -d
     fi
+    # Metadata + connectorctl (update / auto-update / backup work in docker mode too).
+    {
+      printf 'MODE=docker\n'
+      printf 'INSTALL_DIR=%s\n' "${REPO_ROOT}"
+      printf 'INSTALLER_DIR=%s\n' "${REPO_ROOT}"
+      printf 'VERSION=v%s\n' "${CONNECTOR_VERSION}"
+      printf 'INSTALLED_AT=%s\n' "$(date '+%F %T')"
+    } >"${REPO_ROOT}/.install-meta"
+    chmod +x "${REPO_ROOT}/scripts/connectorctl" 2>/dev/null || true
+    ${SUDO:-} ln -sf "${REPO_ROOT}/scripts/connectorctl" /usr/local/bin/connectorctl 2>/dev/null || true
     log_ok "Docker stack configured (CONNECTOR_VERSION=${CONNECTOR_VERSION})"
+    log_ok "Management: connectorctl update --check | update | auto-update"
     ;;
   *)
     die "Unknown mode: ${MODE}"

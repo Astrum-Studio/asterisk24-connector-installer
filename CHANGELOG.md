@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `connectorctl update`: real updates for **native and docker** — `--check` (latest version + CHANGELOG, exit code 0/10/11), minor/patch within the current major by default, `--allow-major`, `--version vX.Y.Z` (including downgrade). Native: release binary + `SHA256SUMS` verification, atomic swap, previous version kept in `.rollback/`. Docker: `CONNECTOR_VERSION` in `.env`, `compose pull` + `up -d`.
+- Safety: lock file, backup before update, migrations, health-check, **automatic rollback** (DB restored from the backup only if migrations ran).
+- `connectorctl auto-update enable|disable|status`: optional systemd timer (cron fallback), minor/patch only, time window, off by default; results in journal and `status`.
+- Docker installs now get `connectorctl` and `.install-meta`.
+- Offline tests: `tests/test-update.sh`.
+
 ## v1.0.3 (2026-10-22) — supported
 
 - Fix native install as root: `migrate` via `runuser` (was `${SUDO} -u` → `-u: command not found`).
