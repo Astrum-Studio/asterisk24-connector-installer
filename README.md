@@ -52,16 +52,16 @@ sudo connectorctl update --version v1.0.5 # конкретная версия, �
 
 `connectorctl update --source DIR` оставлен для совместимости (переустановка native из каталога установщика).
 
-### Автообновление (по умолчанию выключено)
+### Автообновление (по умолчанию включено)
 
 ```bash
+sudo connectorctl auto-update status       # включено/выключено, последняя проверка, результат, версия
 sudo connectorctl auto-update enable [--window 03:00-05:00] [--every 24]
-sudo connectorctl auto-update status
 sudo connectorctl auto-update disable     # полностью удаляет timer/cron и настройки
 ```
 
-- Включает systemd timer `connectorctl-update.timer` (если systemd нет — запись в `/etc/cron.d`), который раз в час запускает `connectorctl auto-update run`.
-- Политика: только minor/patch, **мажорные никогда автоматически**; обновление идёт только внутри окна (локальное время, окно через полночь допустимо, по умолчанию 03:00–05:00) и не чаще раза в `--every` часов (по умолчанию 24). Версия, с которой был откат, повторно не пробуется до выхода новой.
+- **Включается автоматически** при установке (autoinstaller / `install.sh`, native и docker); отключить при установке: флаг `--no-auto-update`. На уже установленных системах включается при ближайшем ручном `connectorctl update` — с сообщением в выводе; после `auto-update disable` повторно не включается. Это systemd timer `connectorctl-update.timer` (если systemd нет — запись в `/etc/cron.d`), который раз в час запускает `connectorctl auto-update run`.
+- Политика: только minor/patch, **мажорные никогда автоматически**; обновление идёт только внутри окна (локальное время, окно через полночь допустимо, по умолчанию 03:00–05:00) и не чаще раза в `--every` часов (по умолчанию 24). Если автообновление до версии X откатилось, X помечается проблемной и автоматически не пробуется повторно, пока не выйдет следующая версия (ручной `update` по-прежнему доступен).
 - Внешних уведомлений нет: результат в журнале (`journalctl -u connectorctl-update`; для cron — `/var/log/connectorctl-update.log`) и в `connectorctl auto-update status` (последняя проверка, результат, версия).
 
 ### Установки до механизма обновления

@@ -15,6 +15,7 @@ AUTO_LOG_FILE="${CONNECTORCTL_LOG_FILE:-/var/log/connectorctl-update.log}"
 AUTO_DEFAULT_WINDOW="03:00-05:00"
 AUTO_DEFAULT_EVERY=24
 AUTO_SKIP_VERSION=""
+AUTO_OPTOUT="${AUTO_STATE_DIR}/auto-update.optout"
 
 auto_conf_get()  { env_get "${AUTO_CONF}" "$1" 2>/dev/null || true; }
 auto_state_get() { env_get "${AUTO_STATE}" "$1" 2>/dev/null || true; }
@@ -124,6 +125,7 @@ auto_enable() {
   ctl="$(auto_ctl_path)"
 
   mkdir -p "${AUTO_CONF_DIR}" "${AUTO_STATE_DIR}"
+  rm -f "${AUTO_OPTOUT}"
   cat >"${AUTO_CONF}" <<CONF
 # connectorctl auto-update (managed by: connectorctl auto-update enable)
 WINDOW_START=${window%-*}
@@ -171,8 +173,11 @@ auto_disable() {
     systemctl daemon-reload 2>/dev/null || true
     systemctl reset-failed connectorctl-update.service 2>/dev/null || true
   fi
-  rmdir "${AUTO_CONF_DIR}" "${AUTO_STATE_DIR}" 2>/dev/null || true
+  rmdir "${AUTO_CONF_DIR}" 2>/dev/null || true
+  mkdir -p "${AUTO_STATE_DIR}" && : >"${AUTO_OPTOUT}"   # explicit opt-out: later updates must not re-enable
   log_ok "Автообновление выключено: timer/cron и настройки удалены"
+  printf "  ${C_DIM}Включить снова: sudo connectorctl auto-update enable${C_RESET}
+"
 }
 
 auto_status() {
@@ -217,4 +222,22 @@ cmd_auto_update() {
       printf 'Использование: connectorctl auto-update enable [--window HH:MM-HH:MM] [--every ЧАСЫ] | disable | status\n' ;;
     *) die "Неизвестная подкоманда auto-update: ${sub} (enable|disable|status)" ;;
   esac
+}
+
+auto_enabled() {
+  [[ -f "${AUTO_SYSTEMD_DIR}/connectorctl-update.timer" || -f "${AUTO_CRON_FILE}" ]]
+}
+
+# Called after a manual `update`: enable auto-update on pre-existing installs (default is ON),
+# unless it is already enabled or the admin turned it off explicitly.
+auto_default_on_update() {
+  auto_enabled && return 0
+  [[ -f "${AUTO_OPTOUT}" ]] && return 0
+  if ( auto_enable ) >/dev/null 2>&1; then
+    log_info "Автообновление включено (minor/patch автоматически, мажорные — только вручную)"
+    printf "  ${C_DIM}Окно %s, проверка раз в %s ч. Статус: connectorctl auto-update status; отключить: sudo connectorctl auto-update disable${C_RESET}\n" \
+      "${AUTO_DEFAULT_WINDOW}" "${AUTO_DEFAULT_EVERY}"
+  else
+    log_warn "Не удалось включить автообновление — включите вручную: sudo connectorctl auto-update enable"
+  fi
 }

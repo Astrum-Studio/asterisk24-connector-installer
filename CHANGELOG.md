@@ -4,7 +4,7 @@
 
 - `connectorctl update`: real updates for **native and docker** — `--check` (latest version + CHANGELOG, exit code 0/10/11), minor/patch within the current major by default, `--allow-major`, `--version vX.Y.Z` (including downgrade). Native: release binary + `SHA256SUMS` verification, atomic swap, previous version kept in `.rollback/`. Docker: `CONNECTOR_VERSION` in `.env`, `compose pull` + `up -d`.
 - Safety: lock file, backup before update, migrations, health-check, **automatic rollback** (DB restored from the backup only if migrations ran).
-- `connectorctl auto-update enable|disable|status`: optional systemd timer (cron fallback), minor/patch only, time window, off by default; results in journal and `status`.
+- `connectorctl auto-update enable|disable|status`: systemd timer (cron fallback), minor/patch only (never major), night window, **on by default**: enabled by the installers (`--no-auto-update` to opt out) and, on existing installs, by the next manual `update` (announced in its output; not re-enabled after `auto-update disable`). A release that was rolled back is not retried until a newer one appears. Results go to the journal and `status` only.
 - Docker installs now get `connectorctl` and `.install-meta`.
 - Offline tests: `tests/test-update.sh`.
 

@@ -18,6 +18,7 @@ MODE="docker"
 ASSUME_YES=0
 NO_START=0
 FORCE_ENV=0
+NO_AUTO_UPDATE=0
 SKIP_DOCKER=0
 VERSION="${CONNECTOR_VERSION:-1.0.0}"
 GHCR_TOKEN=""
@@ -51,6 +52,7 @@ usage() {
   ${C_BLUE}-y, --yes${C_RESET}             non-interactive
   ${C_BLUE}--no-start${C_RESET}           config only
   ${C_BLUE}--force-env${C_RESET}          regenerate secrets
+  ${C_BLUE}--no-auto-update${C_RESET}     не включать автообновление minor/patch (по умолчанию включено)
 
 EOF
 }
@@ -68,6 +70,7 @@ while [[ $# -gt 0 ]]; do
     -y|--yes) ASSUME_YES=1; shift ;;
     --no-start) NO_START=1; shift ;;
     --force-env) FORCE_ENV=1; shift ;;
+    --no-auto-update) NO_AUTO_UPDATE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
@@ -84,6 +87,7 @@ case "${MODE}" in
     [[ "${PORT_FROM_CLI}" -eq 1 ]] && ARGS+=(--port "${EXPOSED_PORT}")
     [[ "${NO_START}" -eq 1 ]] && ARGS+=(--no-start)
     [[ "${FORCE_ENV}" -eq 1 ]] && ARGS+=(--force-env)
+    [[ "${NO_AUTO_UPDATE}" -eq 1 ]] && ARGS+=(--no-auto-update)
     [[ "${ASSUME_YES}" -eq 1 ]] && ARGS+=(-y)
     [[ -n "${MARKET_APP_URL}" ]] && ARGS+=(--market-app-url "${MARKET_APP_URL}")
     [[ -n "${BASE_URL}" ]] && ARGS+=(--base-url "${BASE_URL}")
@@ -119,6 +123,16 @@ case "${MODE}" in
     ${SUDO:-} ln -sf "${REPO_ROOT}/scripts/connectorctl" /usr/local/bin/connectorctl 2>/dev/null || true
     log_ok "Docker stack configured (CONNECTOR_VERSION=${CONNECTOR_VERSION})"
     log_ok "Management: connectorctl update --check | update | auto-update"
+    if [[ "${NO_START}" -eq 1 ]]; then
+      log_info "Auto-update not configured (--no-start); enable later: connectorctl auto-update enable"
+    elif [[ "${NO_AUTO_UPDATE}" -eq 1 ]]; then
+      ${SUDO:-} bash "${REPO_ROOT}/scripts/connectorctl" auto-update disable >/dev/null 2>&1 || true
+      log_info "Auto-update disabled (--no-auto-update)"
+    elif ${SUDO:-} bash "${REPO_ROOT}/scripts/connectorctl" auto-update enable >/dev/null 2>&1; then
+      log_ok "Auto-update enabled (minor/patch, 03:00-05:00); disable: connectorctl auto-update disable"
+    else
+      log_warn "Could not enable auto-update; run: connectorctl auto-update enable"
+    fi
     ;;
   *)
     die "Unknown mode: ${MODE}"

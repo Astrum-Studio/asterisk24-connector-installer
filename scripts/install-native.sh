@@ -10,6 +10,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 ASSUME_YES=0
 NO_START=0
 FORCE_ENV=0
+NO_AUTO_UPDATE=0
 PORT_FROM_CLI=0
 VERSION="${CONNECTOR_VERSION:-1.0.0}"
 VERSION_FROM_CLI=0
@@ -33,6 +34,7 @@ Native install (systemd + binary from GitHub Release).
   -y, --yes         non-interactive
   --no-start        prepare only
   --force-env       regenerate secrets
+  --no-auto-update  do not enable automatic minor/patch updates (default: enabled)
 EOF
 }
 
@@ -46,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --base-url) BASE_URL="${2:-}"; shift 2 ;;
     --no-start) NO_START=1; shift ;;
     --force-env) FORCE_ENV=1; shift ;;
+    --no-auto-update) NO_AUTO_UPDATE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
@@ -147,3 +150,15 @@ ${SUDO} ln -sf "${REPO_ROOT}/scripts/connectorctl" "${CTL_LINK}"
 
 log_ok "Installed connector ${TAG} → ${INSTALL_DIR}"
 log_ok "Management: ${CTL_LINK} (status, doctor, logs, restart, backup)"
+
+# Auto-update (minor/patch, night window) is ON by default; opt out with --no-auto-update.
+if [[ "${NO_START}" -eq 1 ]]; then
+  log_info "Auto-update not configured (--no-start); enable later: connectorctl auto-update enable"
+elif [[ "${NO_AUTO_UPDATE}" -eq 1 ]]; then
+  ${SUDO} bash "${REPO_ROOT}/scripts/connectorctl" auto-update disable >/dev/null 2>&1 || true
+  log_info "Auto-update disabled (--no-auto-update); enable: connectorctl auto-update enable"
+elif ${SUDO} bash "${REPO_ROOT}/scripts/connectorctl" auto-update enable >/dev/null 2>&1; then
+  log_ok "Auto-update enabled (minor/patch, 03:00-05:00); status: connectorctl auto-update status; disable: connectorctl auto-update disable"
+else
+  log_warn "Could not enable auto-update; run: connectorctl auto-update enable"
+fi

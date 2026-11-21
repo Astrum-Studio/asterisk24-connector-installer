@@ -24,6 +24,7 @@ Usage: curl -fsSL .../autoinstaller.sh | sudo bash -s -- [options]
 
   --mode docker|native   --version vX.Y.Z   --install-dir DIR
   --ghcr-token TOKEN (optional)   --skip-docker   --port N   -y/--yes
+  --no-auto-update   do not enable automatic minor/patch updates (default: enabled)
 EOF
 }
 

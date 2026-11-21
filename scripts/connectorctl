@@ -70,7 +70,7 @@ ${C_DIM}Использование:${C_RESET}  connectorctl <команда> [а
   ${C_BLUE}rotate-key${C_RESET}                 новый API-ключ + инвалидация UI-сессий
   ${C_BLUE}backup${C_RESET} [каталог]           дамп БД + .env + config (default: ${DEFAULT_BACKUP_DIR})
   ${C_BLUE}update${C_RESET} [--check|--version V]  обновить коннектор (native и docker); --check — только проверить
-  ${C_BLUE}auto-update${C_RESET} enable|disable|status  автообновление minor/patch по расписанию (по умолчанию выкл.)
+  ${C_BLUE}auto-update${C_RESET} enable|disable|status  автообновление minor/patch по расписанию (по умолчанию включено)
   ${C_BLUE}uninstall${C_RESET} [опции]          снять службы (см. uninstall-native.sh --help)
   ${C_BLUE}version${C_RESET}                   версия и каталог установки
   ${C_BLUE}-h, --help${C_RESET}

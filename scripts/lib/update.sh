@@ -711,7 +711,7 @@ cmd_update() {
     ver_valid "${want}" || die "Некорректная версия: ${want} (ожидается vX.Y.Z)"
     target="$(ver_tag "${want}")"
     if [[ "$(ver_cmp "${target}" "${cur}")" == "0" ]]; then
-      log_ok "Уже установлена ${cur}"; UPD_RESULT="up-to-date"; return 0
+      log_ok "Уже установлена ${cur}"; UPD_RESULT="up-to-date"; upd_post_hook; return 0
     fi
     [[ "$(ver_cmp "${target}" "${cur}")" == "-1" ]] && log_warn "Понижение версии ${cur} → ${target}: схема БД не откатывается автоматически"
     upd_artifact_exists "${target}" || die "Релиз ${target} не найден (нет артефакта для режима ${MODE})"
@@ -726,7 +726,7 @@ cmd_update() {
       else
         log_ok "Установлена актуальная версия (${cur})"; UPD_RESULT="up-to-date"
       fi
-      return 0
+      upd_post_hook; return 0
     fi
     target="${UPD_TARGET}"
   fi
@@ -762,6 +762,7 @@ cmd_update() {
       meta_set UPDATED_AT "$(date '+%F %T')"
       UPD_RESULT="updated"; UPD_TARGET="${target}"
       upd_refresh_installer "${target}" || true
+      upd_post_hook
       log_ok "Обновлено: ${cur} → ${target}"
       ;;
     1) UPD_RESULT="failed"; log_err "Обновление не выполнено, система не менялась" ;;
@@ -772,4 +773,12 @@ cmd_update() {
        printf "     ${C_DIM}Предыдущая версия: %s/.rollback, бэкап: %s${C_RESET}\n" "${ROOT}" "${LAST_BACKUP:-—}" ;;
   esac
   return "${rc}"
+}
+
+# Manual `update` on an install that never had auto-update configured (and was not opted out):
+# turn it on and say so. Never silent, never for --auto/--check runs.
+upd_post_hook() {
+  [[ "${UPD_AUTO:-0}" == "1" ]] && return 0
+  declare -F auto_default_on_update >/dev/null || return 0
+  auto_default_on_update || true
 }

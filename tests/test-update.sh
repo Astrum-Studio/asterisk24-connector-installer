@@ -186,6 +186,7 @@ has "check: changelog of target" "${OUT}" "change in v1.1.0"
 has "check: changelog of skipped release between" "${OUT}" "change in v1.0.7"
 hasnt "check: no changelog of installed version" "${OUT}" "change in v1.0.4"
 eq "check changed nothing: meta" "$(nmeta VERSION)" v1.0.4
+absent "check does not enable auto-update" "${CONNECTORCTL_CRON_DIR}/connectorctl-auto-update"
 
 mv "${API_DIR}/releases" "${API_DIR}/releases.off"
 ctl native update --check
@@ -216,6 +217,9 @@ filehas "services stopped+restarted" "${CALLS}" "systemctl restart"
 exists "backup created before update" "$(ls "${W}"/backups/connector-*.tar.gz 2>/dev/null | head -1)"
 exists "installer scripts refreshed from release" "${NINST}/scripts/MARK"
 absent "stage cleaned up" "${NROOT}/.stage"
+has "update announces auto-update was enabled" "${OUT}" "Автообновление включено"
+has "update says how to disable" "${OUT}" "auto-update disable"
+exists "auto-update enabled by default after update (cron fallback in tests)" "${CONNECTORCTL_CRON_DIR}/connectorctl-auto-update"
 
 ctl native update
 eq "second update: up to date (exit 0)" "${RC}" 0
@@ -320,6 +324,14 @@ has "docker mode hint" "${OUT}" "только для native"
 
 # ═══════════════════════════════════════════════════════════
 echo "== auto-update"
+CONNECTORCTL_FORCE_CRON=1 ctl native auto-update status
+has "status: enabled by default" "${OUT}" "включено"
+CONNECTORCTL_FORCE_CRON=1 ctl native auto-update disable
+absent "disable removed cron" "${CONNECTORCTL_CRON_DIR}/connectorctl-auto-update"
+exists "disable records opt-out" "${CONNECTORCTL_STATE_DIR}/auto-update.optout"
+ctl native update
+has "update after opt-out stays quiet" "${OUT}" "обновлений нет"
+absent "update does not re-enable after opt-out" "${CONNECTORCTL_CRON_DIR}/connectorctl-auto-update"
 ctl native auto-update status
 has "status when disabled" "${OUT}" "выключено"
 
