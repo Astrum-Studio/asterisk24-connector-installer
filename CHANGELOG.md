@@ -21,3 +21,7 @@ Broken install paths (raw CDN cache, bad `SHA256SUMS` paths, piped autoinstaller
 ## v1.0.4
 - connectorctl + uninstall-native; install symlink to /usr/local/bin.
 
+
+## v1.0.7
+- Fix: add missing scripts/lib/detect-recordings.sh (connectorctl failed to source it).
+- Connector: opt-in AMI inbound redirect, Bitrix workday queue pause, call trace (see connector release).
