@@ -136,6 +136,8 @@ printf 'DB__USER=connector\nDB__NAME=connector\nEXPOSED_APP_PORT=8079\nCONNECTOR
 printf 'MODE=docker\nVERSION=v1.0.4\n' >"${DINST}/.install-meta"
 
 export CONNECTORCTL_ALLOW_NONROOT=1 CONNECTORCTL_HEALTH_TIMEOUT=2 CONNECTORCTL_HEALTH_INTERVAL=1
+# Do not depend on the host having systemd (CI runners do): cron unless a test forces systemd.
+export CONNECTORCTL_FORCE_CRON=1
 export CONNECTORCTL_BACKUP_DIR="${W}/backups" CONNECTORCTL_LOCK_FILE="${W}/lock/update.lock"
 export CONNECTORCTL_STATE_DIR="${W}/state" CONNECTORCTL_CONF_DIR="${W}/conf"
 export CONNECTORCTL_SYSTEMD_DIR="${W}/systemd" CONNECTORCTL_CRON_DIR="${W}/cron"
@@ -349,14 +351,14 @@ absent "cron removed" "${CONNECTORCTL_CRON_DIR}/connectorctl-auto-update"
 absent "conf removed" "${CONNECTORCTL_CONF_DIR}/auto-update.conf"
 
 : >"${CALLS}"
-CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update enable
+CONNECTORCTL_FORCE_CRON=0 CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update enable
 eq "enable (systemd) exit 0" "${RC}" 0
 exists "service unit rendered" "${CONNECTORCTL_SYSTEMD_DIR}/connectorctl-update.service"
 exists "timer unit rendered" "${CONNECTORCTL_SYSTEMD_DIR}/connectorctl-update.timer"
 filehasnt "placeholder replaced" "${CONNECTORCTL_SYSTEMD_DIR}/connectorctl-update.service" "__CTL__"
 filehas "service runs auto-update run" "${CONNECTORCTL_SYSTEMD_DIR}/connectorctl-update.service" "auto-update run"
 filehas "timer enabled" "${CALLS}" "enable --now connectorctl-update.timer"
-CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update status
+CONNECTORCTL_FORCE_CRON=0 CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update status
 has "status enabled" "${OUT}" "включено"
 has "status default window" "${OUT}" "03:00-05:00"
 
@@ -382,7 +384,7 @@ eq "auto update exit 0" "${RC}" 0
 eq "auto-updated to v1.1.3" "$(nmeta VERSION)" v1.1.3
 filehas "state: updated" "${CONNECTORCTL_STATE_DIR}/auto-update.state" "LAST_RESULT=updated"
 filehas "state: version" "${CONNECTORCTL_STATE_DIR}/auto-update.state" "LAST_VERSION=v1.1.3"
-CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update status
+CONNECTORCTL_FORCE_CRON=0 CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update status
 has "status shows result" "${OUT}" "updated"
 has "status shows version" "${OUT}" "v1.1.3"
 
@@ -400,7 +402,7 @@ filehas "state: skipped" "${CONNECTORCTL_STATE_DIR}/auto-update.state" "LAST_RES
 eq "still v1.1.3" "$(nmeta VERSION)" v1.1.3
 
 echo "-- disable removes everything"
-CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update disable
+CONNECTORCTL_FORCE_CRON=0 CONNECTORCTL_FORCE_SYSTEMD=1 ctl native auto-update disable
 eq "disable exit 0" "${RC}" 0
 absent "timer unit removed" "${CONNECTORCTL_SYSTEMD_DIR}/connectorctl-update.timer"
 absent "service unit removed" "${CONNECTORCTL_SYSTEMD_DIR}/connectorctl-update.service"

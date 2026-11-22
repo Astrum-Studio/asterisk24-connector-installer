@@ -293,6 +293,7 @@ upd_restore_db() {
 }
 
 # Docker backup (same archive layout as native cmd_backup).
+# shellcheck disable=SC2120  # optional argument
 upd_backup_docker() {
   local dir="${1:-${DEFAULT_BACKUP_DIR}}" ts out tmp
   ts="$(date +%Y%m%d-%H%M%S)"
