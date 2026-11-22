@@ -1,6 +1,9 @@
 x-recordings-volume: &recordings-volume
   ${RECORDINGS_HOST_PATH:-${RECORDINGS_PATH:-/var/spool/asterisk/monitor}}:/var/spool/asterisk/monitor:ro
 
+# Optional: custom connector.yaml (not required — redirect/workday are configured in the app UI).
+#   volumes: [ "./connector.yaml:/opt/connector/config/connector.yaml:ro" ]
+
 x-connector-image: &connector-image
   image: ghcr.io/astrum-studio/asterisk24-connector:${CONNECTOR_VERSION:?set CONNECTOR_VERSION in .env}
   env_file:
@@ -94,6 +97,22 @@ services:
           "probe",
           "--heartbeat",
           "/tmp/connector-cel-reconciler.heartbeat",
+          "--max-age",
+          "120",
+        ]
+
+  worker-workday:
+    <<: *connector-image
+    command: ["worker", "workday"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test:
+        [
+          "CMD",
+          "/opt/connector/connector",
+          "probe",
+          "--heartbeat",
+          "/tmp/connector-workday.heartbeat",
           "--max-age",
           "120",
         ]

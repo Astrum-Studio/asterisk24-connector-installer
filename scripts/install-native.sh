@@ -20,7 +20,7 @@ EXPOSED_PORT="${DEFAULT_PORT}"
 MARKET_APP_URL=""
 BASE_URL=""
 GHCR_TOKEN=""
-SYSTEMD_UNITS=(connector-app connector-ami connector-outbox connector-cel connector-recording)
+SYSTEMD_UNITS=(connector-app connector-ami connector-outbox connector-cel connector-workday connector-recording)
 
 usage() {
   cat <<EOF

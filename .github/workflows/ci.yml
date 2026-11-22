@@ -20,3 +20,8 @@ jobs:
         run: shellcheck -x -S warning scripts/lib/update.sh scripts/lib/autoupdate.sh tests/test-update.sh
       - name: Update / auto-update tests (offline, mocked GitHub)
         run: bash tests/test-update.sh
+
+      - name: shellcheck (workday / connectorctl)
+        run: shellcheck -x -S warning scripts/connectorctl tests/test-workday.sh
+      - name: Workday worker tests
+        run: bash tests/test-workday.sh

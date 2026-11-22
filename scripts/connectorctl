@@ -5,7 +5,7 @@
 #
 #   connectorctl status
 #   connectorctl doctor
-#   connectorctl logs [app|ami|outbox|cel|recording|all] [-f] [-n 200]
+#   connectorctl logs [app|ami|outbox|cel|workday|recording|all] [-f] [-n 200]
 #   connectorctl restart [service]
 #   connectorctl key
 #   connectorctl backup [dir]
@@ -27,6 +27,7 @@ if [[ "${EUID}" -eq 0 ]] && [[ -n "${CONNECTOR_HOME:-}" ]]; then
 else
   ROOT="${CONNECTOR_INSTALL_DIR:-${DEFAULT_NATIVE_INSTALL_DIR}}"
 fi
+# shellcheck disable=SC2034
 REPO_ROOT="${INSTALLER_ROOT}"
 
 # Install mode: native (systemd, ROOT = install dir) or docker (compose project = installer dir).
@@ -46,7 +47,7 @@ ENV_FILE="${ROOT}/.env"
 META_FILE="${ROOT}/.install-meta"
 # shellcheck disable=SC2034  # set by cmd_backup, read by lib/update.sh
 LAST_BACKUP=""
-UNITS=(connector-app connector-ami connector-outbox connector-cel connector-recording)
+UNITS=(connector-app connector-ami connector-outbox connector-cel connector-workday connector-recording)
 DEFAULT_BACKUP_DIR="${CONNECTORCTL_BACKUP_DIR:-/var/backups/bitrix24-asterisk-connector}"
 
 # shellcheck source=lib/update.sh
@@ -64,13 +65,14 @@ ${C_DIM}Использование:${C_RESET}  connectorctl <команда> [а
   ${C_BLUE}doctor${C_RESET}                    диагностика: БД, .env, права, сеть, записи
   ${C_BLUE}detect-recordings${C_RESET}          найти каталог MixMonitor (FreePBX/Asterisk)
   ${C_BLUE}fix-recordings${C_RESET} [--dir D]   прописать RECORDINGS_DIR + systemd ReadOnlyPaths
-  ${C_BLUE}logs${C_RESET} [служба] [-f] [-n N]  журнал (служба: app|ami|outbox|cel|recording|all)
+  ${C_BLUE}logs${C_RESET} [служба] [-f] [-n N]  журнал (служба: app|ami|outbox|cel|workday|recording|all)
   ${C_BLUE}start|stop|restart${C_RESET} [служба]  управление службами (по умолчанию — все)
   ${C_BLUE}key${C_RESET}                       показать API-ключ коннектора
   ${C_BLUE}rotate-key${C_RESET}                 новый API-ключ + инвалидация UI-сессий
   ${C_BLUE}backup${C_RESET} [каталог]           дамп БД + .env + config (default: ${DEFAULT_BACKUP_DIR})
   ${C_BLUE}update${C_RESET} [--check|--version V]  обновить коннектор (native и docker); --check — только проверить
   ${C_BLUE}auto-update${C_RESET} enable|disable|status  автообновление minor/patch по расписанию (по умолчанию включено)
+  ${C_BLUE}sync-units${C_RESET}               доустановить недостающие службы (напр. workday) и запустить
   ${C_BLUE}uninstall${C_RESET} [опции]          снять службы (см. uninstall-native.sh --help)
   ${C_BLUE}version${C_RESET}                   версия и каталог установки
   ${C_BLUE}-h, --help${C_RESET}
@@ -96,9 +98,9 @@ resolve_units() {
   local name="${1:-all}"
   case "${name}" in
     all|"") printf '%s\n' "${UNITS[@]}" ;;
-    app|ami|outbox|cel|recording) printf 'connector-%s\n' "${name}" ;;
+    app|ami|outbox|cel|workday|recording) printf 'connector-%s\n' "${name}" ;;
     connector-*) printf '%s\n' "${name}" ;;
-    *) die "Неизвестная служба: ${name} (app|ami|outbox|cel|recording|all)" ;;
+    *) die "Неизвестная служба: ${name} (app|ami|outbox|cel|workday|recording|all)" ;;
   esac
 }
 
@@ -395,6 +397,7 @@ cmd_backup() {
   (umask 077; tar -C "${tmp}" -czf "${out}" .)
   chmod 600 "${out}"
   rm -rf "${tmp}"
+  # shellcheck disable=SC2034  # read by lib/update.sh
   LAST_BACKUP="${out}"
   log_ok "Бэкап: ${out} ($(du -h "${out}" | cut -f1))"
   printf "  ${C_DIM}Содержит секреты (.env, ключи) — храните отдельно и закрыто.${C_RESET}\n"
@@ -464,7 +467,7 @@ cmd_fix_recordings() {
       -e "s|__PROTECT_HOME__|${unit_protect}|g" \
       -e "s|__RECORDINGS_DIR__|${rec}|g" \
       "${unit_src}" >"${rendered}"
-    install -m 0644 "${rendered}" "/etc/systemd/system/${name}.service"
+    install -m 0644 "${rendered}" "${sysd}/${name}.service"
     rm -f "${rendered}"
   done
   systemctl daemon-reload
@@ -472,6 +475,37 @@ cmd_fix_recordings() {
   log_ok "RECORDINGS_DIR=${rec}"
   log_ok "Обновлены connector-recording / connector-outbox (ProtectHome=${protect})"
   print_kv "Проверка" "connectorctl doctor"
+}
+
+# Устанавливает недостающие systemd-юниты (например, connector-workday на старых установках)
+# и включает их. Уже установленные юниты не трогает.
+cmd_sync_units() {
+  local sysd="${CONNECTORCTL_SYSTEMD_DIR:-/etc/systemd/system}"
+  [[ -n "${CONNECTORCTL_SYSTEMD_DIR:-}" ]] || need_root sync-units "$@"
+  local name src rendered protect added=()
+  protect=true
+  case "${ROOT}" in /root|/root/*|/home/*) protect=false ;; esac
+  for name in "${UNITS[@]}"; do
+    [[ -f "${sysd}/${name}.service" ]] && continue
+    src="${INSTALLER_ROOT}/deploy/systemd/${name}.service"
+    [[ -f "${src}" ]] || { log_warn "Нет unit-шаблона: ${src}"; continue; }
+    rendered="$(mktemp)"
+    sed \
+      -e "s|__INSTALL_DIR__|${ROOT}|g" \
+      -e "s|__LISTEN_PORT__|$(app_port)|g" \
+      -e "s|__PROTECT_HOME__|${protect}|g" \
+      "${src}" >"${rendered}"
+    install -m 0644 "${rendered}" "${sysd}/${name}.service"
+    rm -f "${rendered}"
+    added+=("${name}")
+  done
+  if [[ ${#added[@]} -eq 0 ]]; then
+    log_ok "Все службы уже установлены"
+    return 0
+  fi
+  systemctl daemon-reload
+  systemctl enable --now "${added[@]}"
+  log_ok "Добавлены и запущены: ${added[*]}"
 }
 
 # ─── dispatch ───────────────────────────────────────────────
@@ -497,6 +531,7 @@ case "${cmd}" in
   backup)  cmd_backup "$@" ;;
   update|upgrade) cmd_update "$@" ;;
   auto-update|auto_update) cmd_auto_update "$@" ;;
+  sync-units|sync_units) cmd_sync_units "$@" ;;
   uninstall) need_root uninstall "$@"; exec bash "${INSTALLER_ROOT}/scripts/uninstall-native.sh" "$@" ;;
   version|-v|--version)
     print_kv "Режим" "${MODE}"
