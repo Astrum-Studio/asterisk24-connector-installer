@@ -557,7 +557,7 @@ print_success_card() {
   if [[ "${mode}" == "native" ]]; then
     print_kv "connectorctl status" "состояние служб и /health"
     print_kv "connectorctl doctor" "диагностика: БД, ключи, права, сеть"
-    print_kv "connectorctl logs -f" "логи API (logs ami|outbox|cel|recording|all)"
+    print_kv "connectorctl logs -f" "логи API (logs ami|outbox|cel|workday|recording|all)"
     print_kv "connectorctl restart" "перезапуск всех служб"
     print_kv "connectorctl backup" "дамп БД + конфигурация"
     print_kv "connectorctl update" "обновление из клона репозитория"

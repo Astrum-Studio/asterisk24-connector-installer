@@ -16,3 +16,7 @@ jobs:
         run: |
           curl -fsSL "https://github.com/Astrum-Studio/asterisk24-connector-installer/releases/download/v1.0.1/autoinstaller.sh" \
             | bash -s -- --help
+      - name: shellcheck (workday / connectorctl)
+        run: shellcheck -x -S warning scripts/connectorctl tests/test-workday.sh
+      - name: Workday worker tests
+        run: bash tests/test-workday.sh

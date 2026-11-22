@@ -27,6 +27,7 @@ SYSTEMD_UNITS=(
   connector-ami
   connector-outbox
   connector-cel
+  connector-workday
   connector-recording
 )
 
